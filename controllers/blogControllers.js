@@ -1,6 +1,7 @@
 import mongo from "../models/Blog.js";
 import Author from "../models/Author.js";
 import User from "../models/User.js";
+import View from "../models/View.js";
 
 import { getObject, putObject } from "../services/s3Service.js";
 
@@ -69,11 +70,26 @@ export const saveEditedBlog = async (req, res) => {
   res.json("Saved");
 };
 
-export const getDrafts = async (req, res) => {
+export const getAllBlogsByUser = async (req, res) => {
   const id = req.params.id;
   try {
-    let drafts = await mongo.Blog.find({ author: id });
-    res.json(drafts);
+    let blogs = await mongo.Blog.find({ author: id });
+    res.json(blogs);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
+export const getFeaturedBlogsByUser = async (req, res) => {
+  const id = req.params.id;
+  try {
+    let featured = await mongo.Blog.find({
+      published: true,
+      featured: true,
+      author: id,
+    });
+    res.json(featured);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Internal Server Error" });
@@ -81,10 +97,23 @@ export const getDrafts = async (req, res) => {
 };
 
 export const getBlogDetails = async (req, res) => {
-  let blog = await mongo.Blog.findOne({ _id: req.query.blog });
-  let imageUri = await getObject(bucketName, blog.banner);
-  blog.banner = imageUri;
-  res.json(blog);
+  try {
+    let blog = await mongo.Blog.findOne({ _id: req.query.blog });
+    if (!blog) {
+      return res.status(404).json({ message: "Blog not found" });
+    }
+    let imageUri = await getObject(bucketName, blog.banner);
+    blog.banner = imageUri;
+    await View.View.create({ blog: blog._id });
+    await Author.Author.updateOne(
+      { authorId: blog.author },
+      { $inc: { views: 1 } }
+    );
+    res.json(blog);
+  } catch (error) {
+    console.error("Error getting blog details:", error);
+    res.status(500).json({ error: "There was an error. Please try again." });
+  }
 };
 
 export const getPublishedBlogs = async (req, res) => {
@@ -217,6 +246,21 @@ export const commentOnBlog = async (req, res) => {
     res.json("Comment added successfully.");
   } catch (error) {
     console.error("Error commenting on blog:", error);
+    res.status(500).json({ error: "There was an error. Please try again." });
+  }
+};
+
+export const getViewsOnAuthor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const author = await Author.Author.findOne({ authorId: id });
+    if (!author) {
+      return res.status(404).json({ message: "Author not found" });
+    }
+    const views = await View.View.find({ blog: { $in: author.blogs } });
+    res.json(views);
+  } catch (error) {
+    console.error("Error getting views on author:", error);
     res.status(500).json({ error: "There was an error. Please try again." });
   }
 };

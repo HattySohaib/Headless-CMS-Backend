@@ -37,6 +37,16 @@ export const editUser = async (req, res) => {
     const { id } = req.params;
     const updateData = req.body;
 
+    // Check if the username is being updated and if it's unique
+    if (updateData.username) {
+      const existingUser = await mongo.User.findOne({
+        username: updateData.username,
+      });
+      if (existingUser && existingUser._id.toString() !== id) {
+        return res.status(400).json({ error: "Username already taken" });
+      }
+    }
+
     // If password is being updated, hash the new password
     if (updateData.password) {
       updateData.password_hash = await bcrypt.hash(updateData.password, 10);
@@ -115,7 +125,9 @@ export const getAllAuthors = async (req, res) => {
 export const getAuthorProfileById = async (req, res) => {
   try {
     const { id } = req.params;
+    console.log(id);
     let author = await Author.Author.findOne({ authorId: id });
+
     if (!author) {
       return res.status(404).json({ message: "Author not found" });
     } else {
@@ -161,5 +173,52 @@ export const followAuthor = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const updatePassword = async (req, res) => {
+  const { id } = req.params; // Get user ID from request parameters
+  const { oldPassword, newPassword } = req.body;
+
+  try {
+    // Fetch the user from the database
+    const user = await mongo.User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Verify the old password
+    const isMatch = await bcrypt.compare(oldPassword, user.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Old password is incorrect" });
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update the user's password in the database
+    user.password_hash = hashedPassword;
+    await user.save();
+
+    res.status(200).json({ message: "Password updated successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const listUsernames = async (req, res) => {
+  try {
+    // Fetch only the usernames from the User collection
+    const users = await mongo.User.find({}, "username");
+
+    // Map to extract just the username field from each user document
+    const usernames = users.map((user) => user.username);
+
+    // Respond with the list of usernames
+    return res.status(200).json({ usernames });
+  } catch (error) {
+    console.error("Error retrieving usernames:", error);
+    return res.status(500).json({ error: "Failed to retrieve usernames" });
   }
 };

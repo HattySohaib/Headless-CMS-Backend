@@ -14,16 +14,6 @@ const blogSchema = new mongoose.Schema({
     ref: "User",
     required: true,
   },
-  liked_by: {
-    type: [mongoose.Schema.Types.ObjectId],
-    ref: "User",
-    default: [],
-  },
-  comments: {
-    type: [{ user: mongoose.Schema.Types.ObjectId, comment: String }],
-    ref: "User",
-    default: [],
-  },
   published: Boolean,
   featured: Boolean,
 });

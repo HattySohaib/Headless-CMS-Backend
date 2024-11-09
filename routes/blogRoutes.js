@@ -4,9 +4,10 @@ import upload from "../config/multer.js";
 import {
   createNewBlog,
   saveEditedBlog,
-  getDrafts,
+  getAllBlogsByUser,
   getBlogDetails,
   getPublishedBlogs,
+  getFeaturedBlogsByUser,
   publishBlog,
   moveToDrafts,
   deleteBlog,
@@ -14,6 +15,7 @@ import {
   toggleFeaturedBlog,
   likeBlog,
   commentOnBlog,
+  getViewsOnAuthor,
 } from "../controllers/blogControllers.js";
 import authMiddleware from "../middleware/authenticate.js";
 
@@ -33,13 +35,17 @@ router.post(
   saveEditedBlog
 );
 
-router.get("/get-drafts/:id", authMiddleware, getDrafts);
+router.get("/get-blogs-by-user/:id", authMiddleware, getAllBlogsByUser);
 
 router.get("/blog-details", getBlogDetails);
 
 router.get("/get-published", getPublishedBlogs);
 
 router.get("/get-published/:id", getPublishedBlogs);
+
+router.get("/get-featured/:id", getFeaturedBlogsByUser);
+
+router.get("/get-views/:id", getViewsOnAuthor);
 
 router.post("/publish-blog", authMiddleware, publishBlog);
 

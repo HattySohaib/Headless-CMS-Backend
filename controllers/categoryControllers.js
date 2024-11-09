@@ -33,11 +33,10 @@ export const saveEditedCategory = async (req, res) => {
 };
 
 export const deleteCategory = async (req, res) => {
+  const { id } = req.query;
   try {
-    const category = await mongo.Category.findOne({ _id: req.query.id });
-    await mongo.Category.deleteOne({ value: category.value });
-    await mongo.Category.deleteOne({ parent: category.value });
-    res.status(200).json("Deleted Category and all Subcategories");
+    await mongo.Category.deleteOne({ _id: id });
+    res.status(200).json("Deleted Category");
   } catch (error) {
     res.send(error);
   }

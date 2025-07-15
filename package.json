@@ -1,0 +1,26 @@
+{
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.606.0",
+    "@aws-sdk/s3-request-presigner": "^3.606.0",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.3.0",
+    "mongoose": "^8.0.3",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^11.0.2"
+  },
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "name": "shahawaazserver",
+  "version": "1.0.0",
+  "main": "server.js",
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "type": "module"
+}

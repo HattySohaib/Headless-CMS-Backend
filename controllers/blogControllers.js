@@ -264,3 +264,14 @@ export const getViewsOnAuthor = async (req, res) => {
     res.status(500).json({ error: "There was an error. Please try again." });
   }
 };
+
+export const getBlogsByApiKey = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    let blogs = await mongo.Blog.find({ author: userId, published: true });
+    res.json(blogs);
+  } catch (error) {
+    console.error("Error getting blogs by API key:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};

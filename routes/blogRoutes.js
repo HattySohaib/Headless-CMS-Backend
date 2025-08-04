@@ -16,8 +16,10 @@ import {
   likeBlog,
   commentOnBlog,
   getViewsOnAuthor,
+  getBlogsByApiKey,
 } from "../controllers/blogControllers.js";
 import authMiddleware from "../middleware/authenticate.js";
+import apiKeyMiddleware from "../middleware/apiKeyAuth.js";
 
 const router = express.Router();
 
@@ -64,5 +66,8 @@ router.post("/toggle-blog-feature", authMiddleware, toggleFeaturedBlog);
 
 router.post("/like/:blogId", authMiddleware, likeBlog);
 router.post("/comment/:blogId", authMiddleware, commentOnBlog);
+
+// API Key protected route to get user's blogs
+router.get("/get-published-api", apiKeyMiddleware, getBlogsByApiKey);
 
 export default router;

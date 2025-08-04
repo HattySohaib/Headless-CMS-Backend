@@ -13,7 +13,6 @@ const userSchema = new mongoose.Schema({
     trim: true,
   },
   apiKey: { type: String, default: null },
-  accessToken: { type: String, default: null },
   email: {
     type: String,
     required: true,

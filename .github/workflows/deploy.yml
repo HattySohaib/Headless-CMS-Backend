@@ -21,4 +21,6 @@ jobs:
             cd /var/www/bloggest/APIv2
             git pull origin main
             docker-compose down
-            docker-compose up --build -d
+            docker system prune -f
+            docker-compose build --no-cache
+            docker-compose up -d

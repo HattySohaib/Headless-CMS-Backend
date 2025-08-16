@@ -21,16 +21,19 @@ This project is the backend service for a Headless CMS, designed to manage blog 
 To set up the project locally, follow these steps:
 
 1. Clone the repository:
+
    ```sh
    git clone https://github.com/HattySohaib/Headless-CMS-Backend.git
    ```
 
 2. Change into the project directory:
+
    ```sh
    cd Headless-CMS-Backend
    ```
 
 3. Install the dependencies:
+
    ```sh
    npm install
    ```
@@ -54,6 +57,55 @@ npm start
 ```
 
 This will start the server using `nodemon` on the port specified in the `.env` file.
+
+### API Features
+
+The API supports several advanced features:
+
+#### Filtering
+
+Filter records using query parameters:
+
+```
+/api/blogs?published=true
+```
+
+#### Sorting
+
+Sort records using the `sort` parameter:
+
+```
+/api/blogs?sort=createdAt  // Ascending
+/api/blogs?sort=-createdAt // Descending
+```
+
+#### Pagination
+
+Paginate results using `page` and `limit` parameters:
+
+```
+/api/blogs?page=2&limit=10
+```
+
+#### Field Selection
+
+Select specific fields using the `fields` parameter:
+
+```
+/api/blogs?fields=title,content,author
+```
+
+#### Search
+
+Search across multiple fields using the `search` parameter:
+
+```
+/api/blogs?search=JavaScript
+```
+
+The search is case-insensitive and uses regex to match partial text.
+For blogs, it searches in title, content, and summary fields.
+For users, it searches in username, email, and fullName fields.
 
 ## Available Scripts
 

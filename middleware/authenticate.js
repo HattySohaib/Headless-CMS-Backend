@@ -1,10 +1,11 @@
 import jwt from "jsonwebtoken";
+import { unauthorizedResponse } from "../utils/responseHelpers.js";
 
 const authMiddleware = (req, res, next) => {
   const token = req.header("Authorization");
 
   if (!token) {
-    return res.status(401).json({ message: "No token, authorization denied" });
+    return unauthorizedResponse(res, "No token, authorization denied");
   }
 
   const JWT_SECRET = process.env.JWT_SECRET;
@@ -14,7 +15,7 @@ const authMiddleware = (req, res, next) => {
     req.user = decoded;
     next();
   } catch (err) {
-    res.status(401).json({ message: "Token is not valid" });
+    return unauthorizedResponse(res, "Token is not valid");
   }
 };
 

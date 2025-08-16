@@ -1,56 +1,20 @@
-import mongoose, { Schema } from "mongoose";
+import mongoose from "mongoose";
 
-const userSchema = new mongoose.Schema({
-  full_name: {
-    type: String,
-    required: true,
-    trim: true,
+const userSchema = new mongoose.Schema(
+  {
+    fullName: { type: String, required: true, trim: true },
+    username: { type: String, required: true, unique: true, trim: true },
+    apiKey: { type: String, default: null }, // hash if sensitive
+    email: { type: String, required: true, unique: true, trim: true },
+    passwordHash: { type: String, required: true },
+    bio: { type: String, default: "" },
+    profileImageUrl: { type: String, default: "" },
+    blogCount: { type: Number, default: 0 },
+    followersCount: { type: Number, default: 0 },
+    viewCount: { type: Number, default: 0 },
+    likesCount: { type: Number, default: 0 },
   },
-  username: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true,
-  },
-  apiKey: { type: String, default: null },
-  email: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true,
-  },
-  password_hash: {
-    type: String,
-    required: true,
-  },
-  bio: {
-    type: String,
-    default: "",
-  },
-  profile_image_url: {
-    type: String,
-    default: "",
-  },
-  following: {
-    type: [Schema.Types.ObjectId],
-    ref: "User",
-    default: [],
-  },
-  created_at: {
-    type: Date,
-    default: Date.now,
-  },
-  updated_at: {
-    type: Date,
-    default: Date.now,
-  },
-});
+  { timestamps: true }
+);
 
-userSchema.pre("save", function (next) {
-  this.updated_at = Date.now();
-  next();
-});
-
-const User = mongoose.model("User", userSchema);
-
-export default { User };
+export default mongoose.model("User", userSchema);

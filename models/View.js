@@ -1,18 +1,10 @@
 import mongoose from "mongoose";
-mongoose.set("strictQuery", true);
 
-const viewSchema = new mongoose.Schema({
-  blog: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Blogs",
-    required: true,
+const viewSchema = new mongoose.Schema(
+  {
+    blog: { type: mongoose.Schema.Types.ObjectId, ref: "Blog", required: true },
   },
-  timestamp: {
-    type: Date,
-    default: Date.now,
-  },
-});
+  { timestamps: true }
+);
 
-const View = mongoose.model("Views", viewSchema);
-
-export default { View };
+export default mongoose.model("View", viewSchema);

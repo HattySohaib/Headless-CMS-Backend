@@ -1,20 +1,28 @@
 import crypto from "crypto";
 import User from "../models/User.js";
+import {
+  errorResponse,
+  notFoundResponse,
+  successResponse,
+  validationErrorResponse,
+} from "../utils/responseHelpers.js";
 
 // --- Generate API Key ---
 export const generateApiKey = async (req, res) => {
   try {
-    const { id: userId } = req.user; // Destructure user ID from req.user
+    const { id } = req.user;
 
     // Find the user
-    const user = await User.User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const user = await User.findById(id);
+    if (!user) return notFoundResponse(res, "User");
 
     // Check if the user already has an API key
     if (user.apiKey) {
-      return res
-        .status(400)
-        .json({ message: "API Key already exists for this user" });
+      return validationErrorResponse(
+        res,
+        { apiKey: "API Key already exists for this user" },
+        "Validation failed"
+      );
     }
 
     // Generate a unique API key
@@ -24,9 +32,14 @@ export const generateApiKey = async (req, res) => {
     user.apiKey = apiKey;
     await user.save();
 
-    res.status(201).json({ apiKey });
+    return successResponse(
+      res,
+      { apiKey },
+      "API Key generated successfully",
+      201
+    );
   } catch (error) {
-    res.status(500).json({ message: "Error generating API key", error });
+    return errorResponse(res, "Error generating API key", 500, error);
   }
 };
 
@@ -34,25 +47,27 @@ export const generateApiKey = async (req, res) => {
 export const getUserKey = async (req, res) => {
   try {
     const { id } = req.user;
-    const user = await User.User.findById(id);
+    const user = await User.findById(id);
 
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) return notFoundResponse(res, "User");
 
-    res.status(200).json({
-      apiKey: user.apiKey || "Not Generated",
-    });
+    return successResponse(
+      res,
+      { apiKey: user.apiKey || "Not Generated" },
+      "API Key retrieved successfully"
+    );
   } catch (error) {
-    res.status(500).json({ message: "Error fetching API key", error });
+    return errorResponse(res, "Error fetching API key", 500, error);
   }
 };
 
 // --- Revoke API Key ---
 export const revokeApiKey = async (req, res) => {
   try {
-    const userId = req.user.id; // Get the current user's ID from JWT token
-    await User.User.updateOne({ _id: userId }, { apiKey: null });
-    res.status(200).json({ message: "API key revoked successfully." });
+    const { id } = req.user;
+    await User.findByIdAndUpdate(id, { apiKey: null });
+    return successResponse(res, null, "API key revoked successfully");
   } catch (err) {
-    res.status(500).json({ message: "Error revoking API key." });
+    return errorResponse(res, "Error revoking API key", 500, err);
   }
 };

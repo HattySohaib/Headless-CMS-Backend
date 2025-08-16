@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-mongoose.set("strictQuery", true);
 
 const categorySchema = new mongoose.Schema({
   value: {
@@ -12,6 +11,4 @@ const categorySchema = new mongoose.Schema({
   },
 });
 
-const Category = mongoose.model("Categories", categorySchema);
-
-export default { Category };
+export default mongoose.model("Categories", categorySchema);

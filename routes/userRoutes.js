@@ -4,38 +4,42 @@ import upload from "../config/multer.js";
 import {
   createUser,
   editUser,
-  getAllUsers,
-  getUserProfileById,
-  getAuthorProfileById,
-  getAllAuthors,
-  followAuthor,
+  getUsers,
+  checkUsername,
+  getUserById,
   updatePassword,
-  listUsernames,
 } from "../controllers/userController.js";
 
 import { loginUser } from "../controllers/authController.js";
 import authMiddleware from "../middleware/authenticate.js";
+import { userValidation, authValidation } from "../middleware/validation.js";
 
 const router = express.Router();
 
-router.get("/get-users", getAllUsers);
+router.get("/", getUsers);
+router.get("/check-username", userValidation.checkUsername, checkUsername);
+router.get("/:id", getUserById);
 
-router.get("/get-usernames", listUsernames);
+router.post(
+  "/",
+  upload.single("profileImage"),
+  userValidation.create,
+  createUser
+);
+router.post("/login", authValidation.login, loginUser);
 
-router.post("/", upload.single("profileImage"), createUser);
-
-router.post("/login", loginUser);
-
-router.get("/:id", getUserProfileById);
-
-router.post("/:id", authMiddleware, editUser);
-
-router.get("/author/get-authors", getAllAuthors);
-
-router.get("/author/:id", getAuthorProfileById);
-
-router.post("/follow/:id", authMiddleware, followAuthor);
-
-router.post("/edit-password/:id", authMiddleware, updatePassword);
+router.patch(
+  "/:id",
+  authMiddleware,
+  upload.single("profileImage"),
+  userValidation.update,
+  editUser
+);
+router.patch(
+  "/:id/password",
+  authMiddleware,
+  userValidation.updatePassword,
+  updatePassword
+);
 
 export default router;

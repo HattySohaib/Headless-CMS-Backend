@@ -1,4 +1,8 @@
 import User from "../models/User.js";
+import {
+  unauthorizedResponse,
+  errorResponse,
+} from "../utils/responseHelpers.js";
 
 const apiKeyMiddleware = async (req, res, next) => {
   try {
@@ -6,10 +10,7 @@ const apiKeyMiddleware = async (req, res, next) => {
     const authHeader = req.header("Authorization");
 
     if (!authHeader) {
-      return res.status(401).json({
-        status: "error",
-        message: "Authorization header is required.",
-      });
+      return unauthorizedResponse(res, "Authorization header is required.");
     }
 
     // Extract API key from Bearer token format
@@ -18,21 +19,17 @@ const apiKeyMiddleware = async (req, res, next) => {
       : authHeader;
 
     if (!apiKey) {
-      return res.status(401).json({
-        status: "error",
-        message:
-          "API key is required. Please provide Authorization: Bearer <api-key> header.",
-      });
+      return unauthorizedResponse(
+        res,
+        "API key is required. Please provide Authorization: Bearer <api-key> header."
+      );
     }
 
     // Find user by API key
-    const user = await User.User.findOne({ apiKey: apiKey });
+    const user = await User.findOne({ apiKey: apiKey });
 
     if (!user) {
-      return res.status(401).json({
-        status: "error",
-        message: "Invalid API key.",
-      });
+      return unauthorizedResponse(res, "Invalid API key.");
     }
 
     // Attach user info to request
@@ -45,10 +42,12 @@ const apiKeyMiddleware = async (req, res, next) => {
     next();
   } catch (error) {
     console.error("API Key authentication error:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Internal server error during API key authentication.",
-    });
+    return errorResponse(
+      res,
+      "Internal server error during API key authentication.",
+      500,
+      error
+    );
   }
 };
 

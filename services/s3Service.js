@@ -1,4 +1,8 @@
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from "@aws-sdk/client-s3";
 import { s3 } from "../config/s3.js";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -22,4 +26,13 @@ export const getObject = async (bucketName, key) => {
   const getCommand = new GetObjectCommand(params);
   const url = await getSignedUrl(s3, getCommand);
   return url;
+};
+
+export const deleteObject = async (bucketName, key) => {
+  const params = {
+    Bucket: bucketName,
+    Key: key,
+  };
+  const deleteCommand = new DeleteObjectCommand(params);
+  await s3.send(deleteCommand);
 };

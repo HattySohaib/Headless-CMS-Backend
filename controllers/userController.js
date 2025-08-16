@@ -1,178 +1,219 @@
 import bcrypt from "bcrypt";
-import mongo from "../models/User.js";
-import Author from "../models/Author.js";
+import User from "../models/User.js";
+import APIFeatures from "../utils/apiFeatures.js";
 
 import { getObject, putObject } from "../services/s3Service.js";
+import {
+  errorResponse,
+  notFoundResponse,
+  successResponse,
+  unauthorizedResponse,
+  validationErrorResponse,
+} from "../utils/responseHelpers.js";
 
 const bucketName = process.env.BUCKET_NAME;
 
 export const createUser = async (req, res) => {
   try {
-    const { full_name, username, email, password, bio } = req.body;
+    const { fullName, username, email, password, bio } = req.body;
 
-    const profile_image_url = req.file.originalname;
+    // Check for duplicate username and email (these are database-specific checks)
+    const existingUsername = await User.findOne({ username });
+    if (existingUsername) {
+      return validationErrorResponse(
+        res,
+        { username: "Username is already taken" },
+        "Validation failed"
+      );
+    }
+
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
+      return validationErrorResponse(
+        res,
+        { email: "Email is already registered" },
+        "Validation failed"
+      );
+    }
+
+    if (!req.file) {
+      return validationErrorResponse(
+        res,
+        { profileImage: "Profile image is required" },
+        "Validation failed"
+      );
+    }
+
+    const profileImageUrl = req.file.originalname;
 
     putObject(bucketName, req.file);
 
     // Hash the password before saving
-    const password_hash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    await mongo.User.create({
-      full_name,
+    const newUser = await User.create({
+      fullName,
       username,
       email,
-      password_hash,
+      passwordHash,
       bio,
-      profile_image_url,
+      profileImageUrl,
     });
-    res.status(201).json({ message: "User created successfully" });
+    return successResponse(
+      res,
+      { userId: newUser._id },
+      "User created successfully",
+      201
+    );
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return errorResponse(res, "Failed to create user", 500, {
+      error: err.message,
+    });
   }
 };
 
-// Edit user data
 export const editUser = async (req, res) => {
   try {
     const { id } = req.params;
     const updateData = req.body;
 
-    // Check if the username is being updated and if it's unique
-    if (updateData.username) {
-      const existingUser = await mongo.User.findOne({
+    // Check if user exists
+    const user = await User.findById(id);
+    if (!user) {
+      return notFoundResponse(res, "User");
+    }
+
+    // Check for unique constraints (database-level validations)
+    if (updateData.username && updateData.username !== user.username) {
+      const existingUsername = await User.findOne({
         username: updateData.username,
       });
-      if (existingUser && existingUser._id.toString() !== id) {
-        return res.status(400).json({ error: "Username already taken" });
+      if (existingUsername) {
+        return validationErrorResponse(
+          res,
+          { username: "Username is already taken" },
+          "Validation failed"
+        );
       }
     }
 
-    // If password is being updated, hash the new password
-    if (updateData.password) {
-      updateData.password_hash = await bcrypt.hash(updateData.password, 10);
-      delete updateData.password; // Remove plain password from updateData
+    if (updateData.email && updateData.email !== user.email) {
+      const existingEmail = await User.findOne({ email: updateData.email });
+      if (existingEmail) {
+        return validationErrorResponse(
+          res,
+          { email: "Email is already registered" },
+          "Validation failed"
+        );
+      }
     }
 
-    await mongo.User.findByIdAndUpdate(id, updateData);
+    if (req.file) {
+      putObject(bucketName, req.file);
+      updateData.profileImageUrl = req.file.originalname;
+    }
 
-    res.status(200).json({ message: "User updated successfully" });
+    if (updateData.password) {
+      updateData.passwordHash = await bcrypt.hash(updateData.password, 10);
+      delete updateData.password;
+    }
+
+    await User.findByIdAndUpdate(id, updateData, {
+      new: true,
+      runValidators: true,
+    });
+
+    return successResponse(res, "User updated successfully", 200);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return errorResponse(res, "Failed to update user", 500, {
+      error: err.message,
+    });
   }
 };
 
-export const getUserProfileById = async (req, res) => {
+export const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
-    // Find the user by ID
-    let user = await mongo.User.findById(id).select("-password_hash"); // Exclude password hash
-    let profile_image_url = await getObject(bucketName, user.profile_image_url);
-    user.profile_image_url = profile_image_url;
+
+    let user = await User.findById(id).select("-passwordHash -apiKey"); // Exclude password hash
+
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return notFoundResponse(res, "User");
     }
-    res.json(user);
+
+    let profileImageUrl = await getObject(bucketName, user.profileImageUrl);
+    user.profileImageUrl = profileImageUrl;
+
+    return successResponse(res, user, "User retrieved successfully", 200);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    return errorResponse(res, "Server error", 500);
   }
 };
 
-export const getAllUsers = async (req, res) => {
+export const getUsers = async (req, res) => {
   try {
-    let users = await mongo.User.find().select("-password_hash"); // Exclude password hash
+    // Create base query - exclude password hash
+    const baseQuery = User.find().select("-passwordHash");
+
+    // Apply APIFeatures for filtering, sorting, field selection, searching, and pagination
+    const features = new APIFeatures(baseQuery, req.query)
+      .filter()
+      .search(["username", "email", "fullName"]) // Search in user fields
+      .sort()
+      .limitFields()
+      .paginate();
+
+    // Execute the query
+    let users = await features.query;
+
+    // Get total count for pagination info (apply same filters and search but without pagination)
+    const countQuery = User.find();
+    const countFeatures = new APIFeatures(countQuery, req.query)
+      .filter()
+      .search(["username", "email", "fullName"]); // Apply same search criteria
+    const totalUsers = await countFeatures.query.countDocuments();
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const totalPages = Math.ceil(totalUsers / limit);
+
+    // Process S3 image URLs for each user
     const updatedUsers = await Promise.all(
       users.map(async (user) => {
-        let profile_image_url = await getObject(
-          bucketName,
-          user.profile_image_url
-        );
-        user.profile_image_url = profile_image_url;
+        if (user.profileImageUrl) {
+          try {
+            let profileImageUrl = await getObject(
+              bucketName,
+              user.profileImageUrl
+            );
+            user.profileImageUrl = profileImageUrl;
+          } catch (error) {
+            console.error("Error getting profile image:", error);
+            // Keep original URL if S3 fails
+          }
+        }
         return user;
       })
     );
-    res.json(updatedUsers);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-};
 
-export const getAllAuthors = async (req, res) => {
-  try {
-    let authors = await Author.Author.find();
-    const updatedAuthors = await Promise.all(
-      authors.map(async (author) => {
-        let userdata = await mongo.User.findById(author.authorId).select(
-          "-password_hash"
-        );
-        let profile_image_url = await getObject(
-          bucketName,
-          userdata.profile_image_url
-        );
-        userdata.profile_image_url = profile_image_url;
-        author = { ...author._doc, user: userdata };
-        return author;
-      })
+    return successResponse(
+      res,
+      {
+        users: updatedUsers,
+        pagination: {
+          currentPage: page,
+          totalPages,
+          totalUsers,
+          limit,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        },
+      },
+      "Users retrieved successfully",
+      200
     );
-    res.json(updatedAuthors);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-export const getAuthorProfileById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    console.log(id);
-    let author = await Author.Author.findOne({ authorId: id });
-
-    if (!author) {
-      return res.status(404).json({ message: "Author not found" });
-    } else {
-      const userdata = await mongo.User.findById(author.authorId).select(
-        "-password_hash"
-      );
-      let profile_image_url = await getObject(
-        bucketName,
-        userdata.profile_image_url
-      );
-      userdata.profile_image_url = profile_image_url;
-      author = { ...author._doc, user: userdata };
-      res.json(author);
-    }
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-export const followAuthor = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const author = await Author.Author.findOne({ authorId: id });
-    if (!author) {
-      return res.status(404).json({ message: "Author not found" });
-    }
-    const user = await mongo.User.findById(req.user.id);
-
-    if (user.following.includes(author.authorId)) {
-      user.following.pull(author.authorId);
-      await user.save();
-      author.followers.pull(user._id);
-      await author.save();
-      return res.json({ message: "Author unfollowed successfully" });
-    } else {
-      user.following.push(author.authorId);
-      await user.save();
-      author.followers.push(user._id);
-      await author.save();
-      return res.json({ message: "Author followed successfully" });
-    }
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    return errorResponse(res, "Server error", 500, err);
   }
 };
 
@@ -182,43 +223,51 @@ export const updatePassword = async (req, res) => {
 
   try {
     // Fetch the user from the database
-    const user = await mongo.User.findById(id);
+    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return notFoundResponse(res, "User");
     }
 
     // Verify the old password
-    const isMatch = await bcrypt.compare(oldPassword, user.password_hash);
+    const isMatch = await bcrypt.compare(oldPassword, user.passwordHash);
     if (!isMatch) {
-      return res.status(400).json({ message: "Old password is incorrect" });
+      return unauthorizedResponse(res, "Old password is incorrect");
     }
 
     // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     // Update the user's password in the database
-    user.password_hash = hashedPassword;
+    user.passwordHash = hashedPassword;
     await user.save();
 
-    res.status(200).json({ message: "Password updated successfully" });
+    return successResponse(res, null, "Password updated successfully", 200);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Server error" });
+    return errorResponse(res, "Server error", 500, error);
   }
 };
 
-export const listUsernames = async (req, res) => {
+export const checkUsername = async (req, res) => {
   try {
-    // Fetch only the usernames from the User collection
-    const users = await mongo.User.find({}, "username");
+    const { username } = req.query;
+    // Validation is now handled by middleware (userValidation.checkUsername)
 
-    // Map to extract just the username field from each user document
-    const usernames = users.map((user) => user.username);
+    // Check availability in database
+    const exists = await User.exists({ username });
 
-    // Respond with the list of usernames
-    return res.status(200).json({ usernames });
+    return successResponse(
+      res,
+      {
+        username,
+        available: !exists,
+        valid: true,
+      },
+      "Username checked successfully",
+      200
+    );
   } catch (error) {
-    console.error("Error retrieving usernames:", error);
-    return res.status(500).json({ error: "Failed to retrieve usernames" });
+    console.error("Error checking username:", error);
+    return errorResponse(res, "Failed to check username", 500, error);
   }
 };

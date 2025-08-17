@@ -329,7 +329,7 @@ export const blogValidation = {
  */
 export const categoryValidation = {
   create: [
-    body("name")
+    body("value")
       .notEmpty()
       .withMessage("Category name is required")
       .trim()
@@ -339,18 +339,6 @@ export const categoryValidation = {
         return value
           .replace(/\s+/g, " ") // Replace multiple spaces with a single space
           .substring(0, 50); // Limit length
-      }),
-
-    body("description")
-      .optional()
-      .trim()
-      .escape() // Sanitize: Escape HTML special chars
-      .customSanitizer((value) => {
-        if (!value) return "";
-        // Additional sanitization
-        return value
-          .replace(/\s+/g, " ") // Replace multiple spaces with a single space
-          .substring(0, 200); // Limit length
       }),
 
     validate,
@@ -359,9 +347,9 @@ export const categoryValidation = {
   update: [
     param("id").isMongoId().withMessage("Invalid category ID format").trim(),
 
-    body("name")
+    body("value")
       .notEmpty()
-      .withMessage("Category name is required")
+      .withMessage("Category value is required")
       .trim()
       .escape() // Sanitize: Escape HTML special chars
       .customSanitizer((value) => {
@@ -369,18 +357,6 @@ export const categoryValidation = {
         return value
           .replace(/\s+/g, " ") // Replace multiple spaces with a single space
           .substring(0, 50); // Limit length
-      }),
-
-    body("description")
-      .optional()
-      .trim()
-      .escape() // Sanitize: Escape HTML special chars
-      .customSanitizer((value) => {
-        if (!value) return "";
-        // Additional sanitization
-        return value
-          .replace(/\s+/g, " ") // Replace multiple spaces with a single space
-          .substring(0, 200); // Limit length
       }),
 
     validate,

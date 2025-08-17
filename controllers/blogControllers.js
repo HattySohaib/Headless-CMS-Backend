@@ -16,68 +16,94 @@ import {
 const bucketName = process.env.BUCKET_NAME;
 
 export const createBlog = async (req, res) => {
+  const session = await mongoose.startSession();
+
   try {
-    const userId = req.user.id;
-    const { title, content, category, meta, tags, featured, published } =
-      req.body;
-    const banner = req.file?.originalname;
+    await session.withTransaction(async () => {
+      const userId = req.user.id;
+      const { title, content, category, meta, tags, featured, published } =
+        req.body;
+      const banner = req.file?.originalname;
 
-    // Generate slug from title
-    const slug = title
-      .toLowerCase()
-      .replace(/[^a-z0-9 -]/g, "") // Remove special characters
-      .replace(/\s+/g, "-") // Replace spaces with hyphens
-      .replace(/-+/g, "-") // Replace multiple hyphens with single
-      .trim("-"); // Remove leading/trailing hyphens
+      // Generate slug from title
+      const slug = title
+        .toLowerCase()
+        .replace(/[^a-z0-9 -]/g, "") // Remove special characters
+        .replace(/\s+/g, "-") // Replace spaces with hyphens
+        .replace(/-+/g, "-") // Replace multiple hyphens with single
+        .replace(/^-+|-+$/g, ""); // Remove leading/trailing hyphens
 
-    // Check for duplicate slug
-    const existingBlog = await Blog.findOne({ slug });
-    if (existingBlog) {
-      return conflictResponse(res, "A blog with this title already exists");
-    }
+      // Check for duplicate slug
+      const existingBlog = await Blog.findOne({ slug }).session(session);
+      if (existingBlog) {
+        throw new Error("A blog with this title already exists");
+      }
 
-    const blogData = {
-      banner: banner,
-      author: userId,
-      title,
-      slug,
-      content,
-      category,
-      meta,
-      tags: tags
-        ? Array.isArray(tags)
-          ? tags
-          : tags.split(",").map((tag) => tag.trim())
-        : [],
-      featured: featured === "true" || featured === true || false,
-      published: published === "true" || published === true || false,
-      likesCount: 0,
-      viewsCount: 0,
-    };
+      const blogData = {
+        banner: banner,
+        author: userId,
+        title,
+        slug,
+        content,
+        category,
+        meta,
+        tags: tags
+          ? Array.isArray(tags)
+            ? tags
+            : tags.split(",").map((tag) => tag.trim())
+          : [],
+        featured: featured === "true" || featured === true || false,
+        published: published === "true" || published === true || false,
+        likesCount: 0,
+        viewsCount: 0,
+      };
 
-    // Set publishedAt if the blog is being published
-    if (blogData.published) {
-      blogData.publishedAt = new Date();
-      await User.findByIdAndUpdate(userId, { $inc: { blogCount: 1 } });
-    }
+      // Set publishedAt if the blog is being published
+      if (blogData.published) {
+        blogData.publishedAt = new Date();
+      }
 
-    const newBlog = await Blog.create(blogData);
+      // Create blog within transaction
+      const [newBlog] = await Blog.create([blogData], { session });
 
-    User.findByIdAndUpdate(userId, { $inc: { blogsCount: 1 } }, { new: true });
+      // Update user counters within transaction
+      // blogCount should track published blogs only based on the original logic
+      if (blogData.published) {
+        await User.findByIdAndUpdate(
+          userId,
+          { $inc: { blogCount: 1 } },
+          { session }
+        );
+      }
 
-    // Upload banner to S3 if file exists
+      req.newBlogData = newBlog;
+    });
+
+    // Upload banner to S3 after successful transaction
     if (req.file) {
-      putObject(bucketName, req.file);
+      await putObject(bucketName, req.file);
     }
 
-    return successResponse(res, newBlog, "Blog created successfully", 201);
+    return successResponse(
+      res,
+      req.newBlogData,
+      "Blog created successfully",
+      201
+    );
   } catch (error) {
     console.error("Error creating blog:", error);
+
     // Handle duplicate slug error
-    if (error.code === 11000 && error.keyPattern?.slug) {
+    if (
+      error.message.includes("blog with this title already exists") ||
+      (error.code === 11000 && error.keyPattern?.slug)
+    ) {
       return conflictResponse(res, "A blog with this title already exists");
     }
+
     return errorResponse(res, "Failed to create blog", 500, error);
+  } finally {
+    await session.endSession();
   }
 };
 
@@ -97,15 +123,12 @@ export const getBlogByID = async (req, res) => {
       return notFoundResponse(res, "Blog");
     }
 
-    // Increment view count
-    await Blog.findByIdAndUpdate(blog._id, {
-      $inc: { viewsCount: 1 },
-    });
-
-    await View.create({
-      blog: blog._id,
-    });
-    await User.findByIdAndUpdate(blog.author, { $inc: { viewCount: 1 } });
+    // Simple view tracking without transaction (acceptable for analytics)
+    await Promise.all([
+      Blog.findByIdAndUpdate(blog._id, { $inc: { viewsCount: 1 } }),
+      View.create({ blog: blog._id }),
+      User.findByIdAndUpdate(blog.author, { $inc: { viewCount: 1 } }),
+    ]);
 
     // Get S3 image URL if banner exists
     if (blog.banner) {
@@ -131,94 +154,131 @@ export const getBlogByID = async (req, res) => {
 };
 
 export const editBlog = async (req, res) => {
+  const session = await mongoose.startSession();
+
   try {
     const { id } = req.params;
     const { title, content, category, meta, tags, featured, published } =
       req.body;
 
-    // Check if the blog exists
+    // Check if the blog exists (outside transaction for early return)
     let blog = await Blog.findById(id);
     if (!blog) {
       return notFoundResponse(res, "Blog");
     }
 
-    const updateData = {
-      content,
-      category,
-      meta,
-      tags: tags
-        ? Array.isArray(tags)
-          ? tags
-          : tags.split(",").map((tag) => tag.trim())
-        : blog.tags,
-      featured:
-        featured !== undefined
-          ? featured === "true" || featured === true
-          : blog.featured,
-      published:
-        published !== undefined
-          ? published === "true" || published === true
-          : blog.published,
-    };
+    await session.withTransaction(async () => {
+      const updateData = {
+        content,
+        category,
+        meta,
+        tags: tags
+          ? Array.isArray(tags)
+            ? tags
+            : tags.split(",").map((tag) => tag.trim())
+          : blog.tags,
+        featured:
+          featured !== undefined
+            ? featured === "true" || featured === true
+            : blog.featured,
+        published:
+          published !== undefined
+            ? published === "true" || published === true
+            : blog.published,
+      };
 
-    // Update title and slug if title is provided
-    if (title && title !== blog.title) {
-      updateData.title = title;
-      updateData.slug = title
-        .toLowerCase()
-        .replace(/[^a-z0-9 -]/g, "")
-        .replace(/\s+/g, "-")
-        .replace(/-+/g, "-")
-        .trim("-");
-
-      // Check if the new slug already exists (excluding this blog)
-      const existingBlog = await Blog.findOne({
-        _id: { $ne: id },
-        slug: updateData.slug,
-      });
-
-      if (existingBlog) {
-        return conflictResponse(res, "A blog with this title already exists");
+      // If a new banner is uploaded, set it in updateData
+      if (req.file) {
+        updateData.banner = req.file.originalname;
       }
-    }
 
-    // Check if the category exists (if provided and changed)
-    if (category && category !== blog.category?.toString()) {
-      const existingCategory = await Category.findById(category);
-      if (!existingCategory) {
-        return notFoundResponse(res, "Category");
+      // Update title and slug if title is provided
+      if (title && title !== blog.title) {
+        updateData.title = title;
+        updateData.slug = title
+          .toLowerCase()
+          .replace(/[^a-z0-9 -]/g, "")
+          .replace(/\s+/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-+|-+$/g, ""); // Remove leading/trailing hyphens
+
+        // Check if the new slug already exists (excluding this blog)
+        const existingBlog = await Blog.findOne({
+          _id: { $ne: id },
+          slug: updateData.slug,
+        }).session(session);
+
+        if (existingBlog) {
+          throw new Error("A blog with this title already exists");
+        }
       }
-    }
 
-    // Set publishedAt if blog is being published for the first time
-    if (!blog.published && updateData.published) {
-      updateData.publishedAt = new Date();
-      await User.findByIdAndUpdate(id, { $inc: { blogCount: 1 } });
-    }
+      // Check if the category exists (if provided and changed)
+      if (category && category !== blog.category?.toString()) {
+        const existingCategory = await Category.findById(category).session(
+          session
+        );
+        if (!existingCategory) {
+          throw new Error("Category not found");
+        }
+      }
 
-    if (blog.published && !updateData.published) {
-      await User.findByIdAndUpdate(id, { $decrement: { blogCount: -1 } });
-    }
+      // Handle publishing status changes and update user counters
+      const userUpdateData = { $inc: {} };
+      let hasUserUpdates = false;
 
-    // If a new banner is uploaded, update it
+      // Set publishedAt if blog is being published for the first time
+      if (!blog.published && updateData.published) {
+        updateData.publishedAt = new Date();
+        userUpdateData.$inc.blogCount = 1;
+        hasUserUpdates = true;
+      }
+
+      // Handle unpublishing
+      if (blog.published && !updateData.published) {
+        userUpdateData.$inc.blogCount = -1;
+        hasUserUpdates = true;
+      }
+
+      // Update user counters if needed
+      if (hasUserUpdates) {
+        await User.findByIdAndUpdate(blog.author, userUpdateData, { session });
+      }
+
+      // Update the blog with new data within transaction
+      const updatedBlog = await Blog.findByIdAndUpdate(id, updateData, {
+        new: true,
+        runValidators: true,
+        session,
+      }).populate("author", "username email profileImageUrl");
+
+      req.updatedBlogData = updatedBlog;
+    });
+
+    // Upload new banner to S3 after successful transaction
     if (req.file) {
-      putObject(bucketName, req.file);
-      updateData.banner = req.file.originalname;
+      await putObject(bucketName, req.file);
     }
 
-    // Update the blog with new data
-    const updatedBlog = await Blog.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    }).populate("author", "username email profile_image_url");
-
-    return successResponse(res, updatedBlog, "Blog updated successfully", 200);
+    return successResponse(
+      res,
+      req.updatedBlogData,
+      "Blog updated successfully",
+      200
+    );
   } catch (error) {
     console.error("Error updating blog:", error);
 
-    // Handle duplicate slug error
-    if (error.code === 11000 && error.keyPattern?.slug) {
+    // Handle specific errors
+    if (
+      error.message.includes("blog with this title already exists") ||
+      (error.code === 11000 && error.keyPattern?.slug)
+    ) {
       return conflictResponse(res, "A blog with this title already exists");
+    }
+
+    if (error.message.includes("Category not found")) {
+      return notFoundResponse(res, "Category");
     }
 
     return errorResponse(
@@ -227,34 +287,59 @@ export const editBlog = async (req, res) => {
       500,
       error
     );
+  } finally {
+    await session.endSession();
   }
 };
 
 export const deleteBlog = async (req, res) => {
-  try {
-    const { id } = req.params;
+  const session = await mongoose.startSession();
 
-    // Check if the blog exists
-    let blog = await Blog.findById(id);
-    if (!blog) {
+  try {
+    await session.withTransaction(async () => {
+      const { id } = req.params;
+
+      // Check if the blog exists
+      let blog = await Blog.findById(id).session(session);
+      if (!blog) {
+        throw new Error("Blog not found");
+      }
+
+      // Delete the blog within transaction
+      await Blog.findByIdAndDelete(id, { session });
+
+      // Update user counters within transaction
+      // Only decrement blogCount if the blog was published
+      if (blog.published) {
+        await User.findByIdAndUpdate(
+          blog.author,
+          { $inc: { blogCount: -1 } },
+          { session }
+        );
+      }
+    });
+
+    // Delete banner image from S3 after successful transaction
+    if (blog.banner) {
+      await deleteObject(bucketName, blog.banner);
+    }
+
+    return successResponse(res, null, "Blog deleted successfully", 200);
+  } catch (error) {
+    console.error("Error deleting blog:", error);
+
+    if (error.message.includes("Blog not found")) {
       return notFoundResponse(res, "Blog");
     }
 
-    // Delete the blog
-    await Blog.findByIdAndDelete(id);
-
-    // Optionally, delete the banner image from S3 if needed
-    await deleteObject(bucketName, blog.banner);
-
-    return successResponse(res, "Blog deleted successfully", 200);
-  } catch (error) {
-    console.error("Error deleting blog:", error);
     return errorResponse(
       res,
       "There was an error. Please try again.",
       500,
       error
     );
+  } finally {
+    await session.endSession();
   }
 };
 

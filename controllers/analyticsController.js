@@ -1,7 +1,7 @@
 import Blog from "../models/Blog.js";
 import Message from "../models/Messages.js";
 import View from "../models/View.js";
-import User from "../models/User.js";
+import Like from "../models/Like.js";
 import { errorResponse, successResponse } from "../utils/responseHelpers.js";
 
 // Helper function to get start of day for a given date
@@ -363,43 +363,8 @@ export const getPerformanceMetrics = async (req, res) => {
   }
 };
 
-// 4. Quarterly View Share Endpoint
-export const getQuarterlyViews = async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    // Get user's blogs
-    const userBlogs = await Blog.find({ author: userId }).select("_id");
-    const blogIds = userBlogs.map((blog) => blog._id);
-
-    // Get quarterly ranges
-    const quarters = getQuarterlyRanges();
-    const quarterlyViews = [];
-
-    for (const quarter of quarters) {
-      const viewCount = await View.countDocuments({
-        blog: { $in: blogIds },
-        createdAt: { $gte: quarter.start, $lte: quarter.end },
-      });
-
-      quarterlyViews.push({
-        label: quarter.label,
-        value: viewCount,
-        color: quarter.color,
-      });
-    }
-
-    return successResponse(
-      res,
-      quarterlyViews,
-      "Quarterly views retrieved successfully"
-    );
-  } catch (error) {
-    return errorResponse(res, "Failed to retrieve quarterly views", 500, error);
-  }
-};
-
-export const getUserViews = async (req, res) => {
+// 4. Views Statistics Endpoint
+export const getDailyViews = async (req, res) => {
   try {
     const userId = req.user.id; // Use authenticated user's ID
     const days = parseInt(req.query.days) || 30; // Default to last 30 days
@@ -463,5 +428,82 @@ export const getDetailedViews = async (req, res) => {
     return successResponse(res, views, "User views retrieved successfully");
   } catch (error) {
     return errorResponse(res, "Failed to retrieve user views", 500, error);
+  }
+};
+
+export const getQuarterlyViews = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Get user's blogs
+    const userBlogs = await Blog.find({ author: userId }).select("_id");
+    const blogIds = userBlogs.map((blog) => blog._id);
+
+    // Get quarterly ranges
+    const quarters = getQuarterlyRanges();
+    const quarterlyViews = [];
+
+    for (const quarter of quarters) {
+      const viewCount = await View.countDocuments({
+        blog: { $in: blogIds },
+        createdAt: { $gte: quarter.start, $lte: quarter.end },
+      });
+
+      quarterlyViews.push({
+        label: quarter.label,
+        value: viewCount,
+        color: quarter.color,
+      });
+    }
+
+    return successResponse(
+      res,
+      quarterlyViews,
+      "Quarterly views retrieved successfully"
+    );
+  } catch (error) {
+    return errorResponse(res, "Failed to retrieve quarterly views", 500, error);
+  }
+};
+
+// 5. Likes Statistics Endpoint
+export const getDailyLikes = async (req, res) => {
+  try {
+    const userId = req.user.id; // Use authenticated user's ID
+    const days = parseInt(req.query.days) || 30; // Default to last 30 days
+
+    // Calculate the start date based on the days parameter
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - (days - 1));
+    startDate.setHours(0, 0, 0, 0); // Start of day
+
+    // Get user's blogs
+    const userBlogs = await Blog.find({ author: userId }).select("_id");
+    const blogIds = userBlogs.map((blog) => blog._id);
+
+    // Get likes for each blog within the specified date range
+    const likes = await Like.aggregate([
+      {
+        $match: {
+          blog: { $in: blogIds },
+          createdAt: { $gte: startDate }, // Only include likes from the last 'days' days
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+          },
+          totalLikes: { $sum: 1 },
+        },
+      },
+      {
+        $sort: { _id: 1 },
+      },
+    ]);
+
+    return successResponse(res, likes, "User likes retrieved successfully");
+  } catch (error) {
+    return errorResponse(res, "Failed to retrieve user likes", 500, error);
   }
 };

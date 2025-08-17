@@ -2,3 +2,9 @@ node_modules
 .env
 public/uploads
 *.md
+seedBlog.js
+seedBlogsAtlas.js
+seedLikes.js
+seedViews.js
+seedUsers.js
+seedMessages.js

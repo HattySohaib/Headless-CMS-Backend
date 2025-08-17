@@ -1,4 +1,6 @@
+import mongoose from "mongoose";
 import Category from "../models/Category.js";
+import Blog from "../models/Blog.js";
 import {
   errorResponse,
   successResponse,
@@ -21,24 +23,23 @@ export const getCategories = async (req, res) => {
 
 export const createCategory = async (req, res) => {
   try {
-    const { name, description } = req.body;
+    const { value } = req.body;
 
     // Check if category already exists (case-insensitive)
     const existingCategory = await Category.findOne({
-      name: { $regex: new RegExp(`^${name}$`, "i") },
+      value: { $regex: new RegExp(`^${value}$`, "i") },
     });
 
     if (existingCategory) {
       return validationErrorResponse(
         res,
-        { name: "Category with this name already exists" },
+        { value: "Category with this name already exists" },
         "Validation failed"
       );
     }
 
     const newCategory = await Category.create({
-      name,
-      description: description || "",
+      value,
     });
 
     return successResponse(
@@ -55,7 +56,7 @@ export const createCategory = async (req, res) => {
 export const updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description } = req.body;
+    const { value } = req.body;
 
     // Check if category exists
     const existingCategory = await Category.findById(id);
@@ -63,16 +64,16 @@ export const updateCategory = async (req, res) => {
       return errorResponse(res, "Category not found", 404);
     }
 
-    // Check if the new name already exists (excluding the current category)
-    if (name && name !== existingCategory.name) {
+    // Check if the new value already exists (excluding the current category)
+    if (value && value !== existingCategory.value) {
       const duplicateCategory = await Category.findOne({
         _id: { $ne: id },
-        name: { $regex: new RegExp(`^${name}$`, "i") },
+        value: { $regex: new RegExp(`^${value}$`, "i") },
       });
       if (duplicateCategory) {
         return validationErrorResponse(
           res,
-          { name: "Category with this name already exists" },
+          { value: "Category with this value already exists" },
           "Validation failed"
         );
       }
@@ -80,7 +81,7 @@ export const updateCategory = async (req, res) => {
 
     const updatedCategory = await Category.findByIdAndUpdate(
       id,
-      { name, description },
+      { value },
       { new: true, runValidators: true }
     );
 
@@ -105,13 +106,23 @@ export const deleteCategory = async (req, res) => {
     }
 
     // Check if category is being used by any blogs
-    // This would require importing the Blog model and checking for references
-    // For example: const blogCount = await Blog.countDocuments({ category: id });
-    // If you have this relationship, add the check here
+    const blogCount = await Blog.countDocuments({ category: id });
+    if (blogCount > 0) {
+      return validationErrorResponse(
+        res,
+        {
+          category: `Cannot delete category. It is being used by ${blogCount} blog(s).`,
+        },
+        "Validation failed"
+      );
+    }
 
+    // Delete the category
     await Category.findByIdAndDelete(id);
+
     return successResponse(res, null, "Category deleted successfully");
   } catch (error) {
+    console.error("Error deleting category:", error);
     return errorResponse(res, "Failed to delete category", 500, error);
   }
 };

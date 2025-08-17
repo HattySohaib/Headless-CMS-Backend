@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Like from "../models/Like.js";
 import Blog from "../models/Blog.js";
 import {
@@ -9,13 +10,33 @@ import {
 
 // POST /likes/:postId → Like a blog
 export const likeBlog = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { postId } = req.params;
+  const session = await mongoose.startSession();
 
-    // Prevent duplicate likes
-    const existing = await Like.findOne({ userId, postId });
-    if (existing) {
+  try {
+    await session.withTransaction(async () => {
+      const userId = req.user._id;
+      const { postId } = req.params;
+
+      // Prevent duplicate likes
+      const existing = await Like.findOne({ userId, postId }).session(session);
+      if (existing) {
+        throw new Error("Blog already liked by this user");
+      }
+
+      // Create like and increment blog count within transaction
+      await Like.create([{ userId, postId }], { session });
+      await Blog.findByIdAndUpdate(
+        postId,
+        { $inc: { likesCount: 1 } },
+        { session }
+      );
+    });
+
+    return successResponse(res, null, "Blog liked successfully", 201);
+  } catch (error) {
+    console.error("Error liking blog:", error);
+
+    if (error.message.includes("Blog already liked by this user")) {
       return validationErrorResponse(
         res,
         { postId: "Blog already liked by this user" },
@@ -23,38 +44,52 @@ export const likeBlog = async (req, res) => {
       );
     }
 
-    await Like.create({ userId, postId });
-
-    // Optional: increment like count in Blog doc
-    await Blog.findByIdAndUpdate(postId, { $inc: { likesCount: 1 } });
-
-    return successResponse(res, null, "Blog liked successfully", 201);
-  } catch (error) {
     return errorResponse(res, "Failed to like blog", 500, {
       error: error.message,
     });
+  } finally {
+    await session.endSession();
   }
 };
 
 // DELETE /likes/:postId → Unlike a blog
 export const unlikeBlog = async (req, res) => {
+  const session = await mongoose.startSession();
+
   try {
-    const userId = req.user._id;
-    const { postId } = req.params;
+    await session.withTransaction(async () => {
+      const userId = req.user._id;
+      const { postId } = req.params;
 
-    const deleted = await Like.findOneAndDelete({ userId, postId });
-    if (!deleted) {
-      return notFoundResponse(res, "Like");
-    }
+      // Delete like and decrement blog count within transaction
+      const deleted = await Like.findOneAndDelete(
+        { userId, postId },
+        { session }
+      );
+      if (!deleted) {
+        throw new Error("Like not found");
+      }
 
-    // Optional: decrement like count
-    await Blog.findByIdAndUpdate(postId, { $inc: { likesCount: -1 } });
+      await Blog.findByIdAndUpdate(
+        postId,
+        { $inc: { likesCount: -1 } },
+        { session }
+      );
+    });
 
     return successResponse(res, null, "Blog unliked successfully");
   } catch (error) {
+    console.error("Error unliking blog:", error);
+
+    if (error.message.includes("Like not found")) {
+      return notFoundResponse(res, "Like");
+    }
+
     return errorResponse(res, "Failed to unlike blog", 500, {
       error: error.message,
     });
+  } finally {
+    await session.endSession();
   }
 };
 

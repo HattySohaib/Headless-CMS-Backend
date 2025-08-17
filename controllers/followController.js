@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Follow from "../models/Follow.js";
 import User from "../models/User.js";
 import {
@@ -8,11 +9,38 @@ import {
 
 // POST /follows/:followedId → Follow a user
 export const followUser = async (req, res) => {
-  try {
-    const followerId = req.user._id;
-    const { followedId } = req.params;
+  const session = await mongoose.startSession();
 
-    if (followerId.toString() === followedId) {
+  try {
+    await session.withTransaction(async () => {
+      const followerId = req.user._id;
+      const { followedId } = req.params;
+
+      if (followerId.toString() === followedId) {
+        throw new Error("You cannot follow yourself");
+      }
+
+      const existing = await Follow.findOne({ followerId, followedId }).session(
+        session
+      );
+      if (existing) {
+        throw new Error("Already following this user");
+      }
+
+      // Create follow relationship and increment counter within transaction
+      await Follow.create([{ followerId, followedId }], { session });
+      await User.findByIdAndUpdate(
+        followedId,
+        { $inc: { followersCount: 1 } },
+        { session }
+      );
+    });
+
+    return successResponse(res, null, "User followed successfully", 201);
+  } catch (error) {
+    console.error("Error following user:", error);
+
+    if (error.message.includes("cannot follow yourself")) {
       return validationErrorResponse(
         res,
         { followedId: "You cannot follow yourself" },
@@ -20,8 +48,7 @@ export const followUser = async (req, res) => {
       );
     }
 
-    const existing = await Follow.findOne({ followerId, followedId });
-    if (existing) {
+    if (error.message.includes("Already following this user")) {
       return validationErrorResponse(
         res,
         { followedId: "Already following this user" },
@@ -29,27 +56,44 @@ export const followUser = async (req, res) => {
       );
     }
 
-    await Follow.create({ followerId, followedId });
-
-    // Optional: increment followersCount in followed user
-    await User.findByIdAndUpdate(followedId, { $inc: { followersCount: 1 } });
-
-    return successResponse(res, null, "User followed successfully", 201);
-  } catch (error) {
     return errorResponse(res, "Failed to follow user", 500, {
       error: error.message,
     });
+  } finally {
+    await session.endSession();
   }
 };
 
 // DELETE /follows/:followedId → Unfollow a user
 export const unfollowUser = async (req, res) => {
-  try {
-    const followerId = req.user._id;
-    const { followedId } = req.params;
+  const session = await mongoose.startSession();
 
-    const deleted = await Follow.findOneAndDelete({ followerId, followedId });
-    if (!deleted) {
+  try {
+    await session.withTransaction(async () => {
+      const followerId = req.user._id;
+      const { followedId } = req.params;
+
+      // Delete follow relationship and decrement counter within transaction
+      const deleted = await Follow.findOneAndDelete(
+        { followerId, followedId },
+        { session }
+      );
+      if (!deleted) {
+        throw new Error("Follow relationship not found");
+      }
+
+      await User.findByIdAndUpdate(
+        followedId,
+        { $inc: { followersCount: -1 } },
+        { session }
+      );
+    });
+
+    return successResponse(res, null, "User unfollowed successfully");
+  } catch (error) {
+    console.error("Error unfollowing user:", error);
+
+    if (error.message.includes("Follow relationship not found")) {
       return errorResponse(
         res,
         "Follow relationship not found",
@@ -59,14 +103,11 @@ export const unfollowUser = async (req, res) => {
       );
     }
 
-    // Optional: decrement followersCount
-    await User.findByIdAndUpdate(followedId, { $inc: { followersCount: -1 } });
-
-    return successResponse(res, null, "User unfollowed successfully");
-  } catch (error) {
     return errorResponse(res, "Failed to unfollow user", 500, {
       error: error.message,
     });
+  } finally {
+    await session.endSession();
   }
 };
 

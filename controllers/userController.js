@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import mongoose from "mongoose";
 import User from "../models/User.js";
 import APIFeatures from "../utils/apiFeatures.js";
 
@@ -14,29 +15,81 @@ import {
 const bucketName = process.env.BUCKET_NAME;
 
 export const createUser = async (req, res) => {
-  try {
-    const { fullName, username, email, password, bio } = req.body;
+  const session = await mongoose.startSession();
 
-    // Check for duplicate username and email (these are database-specific checks)
-    const existingUsername = await User.findOne({ username });
-    if (existingUsername) {
+  try {
+    await session.withTransaction(async () => {
+      const { fullName, username, email, password, bio } = req.body;
+
+      // Check for duplicate username and email (these are database-specific checks)
+      const existingUsername = await User.findOne({ username }).session(
+        session
+      );
+      if (existingUsername) {
+        throw new Error("Username is already taken");
+      }
+
+      const existingEmail = await User.findOne({ email }).session(session);
+      if (existingEmail) {
+        throw new Error("Email is already registered");
+      }
+
+      if (!req.file) {
+        throw new Error("Profile image is required");
+      }
+
+      const profileImageUrl = req.file.originalname;
+
+      // Hash the password before saving
+      const passwordHash = await bcrypt.hash(password, 10);
+
+      // Create user within transaction
+      const [newUser] = await User.create(
+        [
+          {
+            fullName,
+            username,
+            email,
+            passwordHash,
+            bio,
+            profileImageUrl,
+          },
+        ],
+        { session }
+      );
+
+      // Upload to S3 after successful user creation
+      await putObject(bucketName, req.file);
+
+      // Store user data for response
+      req.newUserData = { userId: newUser._id };
+    });
+
+    return successResponse(
+      res,
+      req.newUserData,
+      "User created successfully",
+      201
+    );
+  } catch (err) {
+    console.error("User creation error:", err);
+
+    // Handle specific validation errors
+    if (err.message.includes("Username is already taken")) {
       return validationErrorResponse(
         res,
         { username: "Username is already taken" },
         "Validation failed"
       );
     }
-
-    const existingEmail = await User.findOne({ email });
-    if (existingEmail) {
+    if (err.message.includes("Email is already registered")) {
       return validationErrorResponse(
         res,
         { email: "Email is already registered" },
         "Validation failed"
       );
     }
-
-    if (!req.file) {
+    if (err.message.includes("Profile image is required")) {
       return validationErrorResponse(
         res,
         { profileImage: "Profile image is required" },
@@ -44,31 +97,11 @@ export const createUser = async (req, res) => {
       );
     }
 
-    const profileImageUrl = req.file.originalname;
-
-    putObject(bucketName, req.file);
-
-    // Hash the password before saving
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    const newUser = await User.create({
-      fullName,
-      username,
-      email,
-      passwordHash,
-      bio,
-      profileImageUrl,
-    });
-    return successResponse(
-      res,
-      { userId: newUser._id },
-      "User created successfully",
-      201
-    );
-  } catch (err) {
     return errorResponse(res, "Failed to create user", 500, {
       error: err.message,
     });
+  } finally {
+    await session.endSession();
   }
 };
 

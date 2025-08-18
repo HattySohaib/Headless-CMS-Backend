@@ -3,8 +3,6 @@ import View from "../models/View.js";
 import Category from "../models/Category.js";
 import mongoose from "mongoose";
 
-import crypto from "crypto";
-
 import APIFeatures from "../utils/apiFeatures.js";
 import { getObject, putObject, deleteObject } from "../services/s3Service.js";
 import User from "../models/User.js";
@@ -20,10 +18,21 @@ const bucketName = process.env.BUCKET_NAME;
 
 //helper
 
-const createCacheKey = (prefix, obj) => {
-  const hash = crypto.createHash("sha256");
-  hash.update(JSON.stringify(obj));
-  return `${prefix}:${hash.digest("hex")}`;
+const createCacheKey = (prefix, obj = {}) => {
+  if (Object.keys(obj).length === 0) {
+    return prefix;
+  }
+
+  const keyParts = [prefix];
+  Object.keys(obj)
+    .sort()
+    .forEach((key) => {
+      if (obj[key] !== undefined && obj[key] !== null && obj[key] !== "") {
+        keyParts.push(`${key}:${obj[key]}`);
+      }
+    });
+
+  return keyParts.join(":");
 };
 
 export const createBlog = async (req, res) => {
@@ -78,14 +87,12 @@ export const createBlog = async (req, res) => {
       const [newBlog] = await Blog.create([blogData], { session });
 
       // Update user counters within transaction
-      // blogCount should track published blogs only based on the original logic
-      if (blogData.published) {
-        await User.findByIdAndUpdate(
-          userId,
-          { $inc: { blogCount: 1 } },
-          { session }
-        );
-      }
+      // blogCount should track all blogs (published and unpublished)
+      await User.findByIdAndUpdate(
+        userId,
+        { $inc: { blogCount: 1 } },
+        { session }
+      );
 
       req.newBlogData = newBlog;
     });
@@ -238,7 +245,7 @@ export const editBlog = async (req, res) => {
         }).session(session);
 
         if (existingBlog) {
-          throw new Error("A blog with this title already exists");
+          return conflictResponse(res, "A blog with this title already exists");
         }
       }
 
@@ -248,30 +255,13 @@ export const editBlog = async (req, res) => {
           session
         );
         if (!existingCategory) {
-          throw new Error("Category not found");
+          return notFoundResponse(res, "Category");
         }
       }
-
-      // Handle publishing status changes and update user counters
-      const userUpdateData = { $inc: {} };
-      let hasUserUpdates = false;
 
       // Set publishedAt if blog is being published for the first time
       if (!blog.published && updateData.published) {
         updateData.publishedAt = new Date();
-        userUpdateData.$inc.blogCount = 1;
-        hasUserUpdates = true;
-      }
-
-      // Handle unpublishing
-      if (blog.published && !updateData.published) {
-        userUpdateData.$inc.blogCount = -1;
-        hasUserUpdates = true;
-      }
-
-      // Update user counters if needed
-      if (hasUserUpdates) {
-        await User.findByIdAndUpdate(blog.author, userUpdateData, { session });
       }
 
       // Check if only published/featured fields are being updated
@@ -295,7 +285,25 @@ export const editBlog = async (req, res) => {
       await putObject(bucketName, req.file);
     }
 
+    // Invalidate specific blog cache
     await redisClient.del(`blog:${id}`);
+
+    // Invalidate all blog list caches for this user
+    const userId = req.user.id;
+    console.log("Invalidating blog caches for user:", userId);
+    const userBlogCachePattern = `blogs:*author:${userId}*`;
+    const userBlogKeys = await redisClient.keys(userBlogCachePattern);
+    console.log("User blog cache keys:", userBlogKeys);
+    if (userBlogKeys.length > 0) {
+      await redisClient.del(userBlogKeys);
+    }
+
+    // Also invalidate general blog list caches since the blog content might affect ordering
+    const generalBlogCachePattern = `blogs:*`;
+    const generalBlogKeys = await redisClient.keys(generalBlogCachePattern);
+    if (generalBlogKeys.length > 0) {
+      await redisClient.del(generalBlogKeys);
+    }
 
     return successResponse(
       res,
@@ -348,19 +356,38 @@ export const deleteBlog = async (req, res) => {
       await Blog.findByIdAndDelete(id, { session });
 
       // Update user counters within transaction
-      // Only decrement blogCount if the blog was published
-      if (blog.published) {
-        await User.findByIdAndUpdate(
-          blog.author,
-          { $inc: { blogCount: -1 } },
-          { session }
-        );
-      }
+      // Decrement blogCount for all blogs (published and unpublished)
+      await User.findByIdAndUpdate(
+        blog.author,
+        { $inc: { blogCount: -1 } },
+        { session }
+      );
     });
 
     // Delete banner image from S3 after successful transaction
     if (blog && blog.banner) {
       await deleteObject(bucketName, blog.banner);
+    }
+
+    // Invalidate caches after successful deletion
+    const { id } = req.params;
+    const userId = blog.author;
+
+    // Invalidate specific blog cache
+    await redisClient.del(`blog:${id}`);
+
+    // Invalidate all blog list caches for this user
+    const userBlogCachePattern = `blogs:*author:${userId}*`;
+    const userBlogKeys = await redisClient.keys(userBlogCachePattern);
+    if (userBlogKeys.length > 0) {
+      await redisClient.del(userBlogKeys);
+    }
+
+    // Invalidate general blog list caches
+    const generalBlogCachePattern = `blogs:*`;
+    const generalBlogKeys = await redisClient.keys(generalBlogCachePattern);
+    if (generalBlogKeys.length > 0) {
+      await redisClient.del(generalBlogKeys);
     }
 
     return successResponse(res, null, "Blog deleted successfully", 200);

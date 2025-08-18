@@ -12,13 +12,21 @@ import {
   validationErrorResponse,
 } from "../utils/responseHelpers.js";
 import { redisClient } from "../services/redis.js";
-import crypto from "crypto";
 
 //helper functions for caching
 const createCacheKey = (prefix, params = {}) => {
-  const hash = crypto.createHash("sha256");
-  hash.update(JSON.stringify(params));
-  return `${prefix}:${hash.digest("hex")}`;
+  if (Object.keys(params).length === 0) {
+    return prefix;
+  }
+  
+  const keyParts = [prefix];
+  Object.keys(params).sort().forEach(key => {
+    if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
+      keyParts.push(`${key}:${params[key]}`);
+    }
+  });
+  
+  return keyParts.join(':');
 };
 
 const bucketName = process.env.BUCKET_NAME;

@@ -3,13 +3,29 @@ import User from "../models/User.js";
 import { errorResponse, successResponse } from "../utils/responseHelpers.js";
 import APIFeatures from "../utils/apiFeatures.js";
 import { redisClient } from "../services/redis.js";
-import crypto from "crypto";
 
 //helper functions for caching
 const createCacheKey = (prefix, userId, params = {}) => {
-  const hash = crypto.createHash("sha256");
-  hash.update(JSON.stringify({ userId, ...params }));
-  return `${prefix}:${hash.digest("hex")}`;
+  const allParams = { userId, ...params };
+
+  if (Object.keys(allParams).length === 0) {
+    return prefix;
+  }
+
+  const keyParts = [prefix];
+  Object.keys(allParams)
+    .sort()
+    .forEach((key) => {
+      if (
+        allParams[key] !== undefined &&
+        allParams[key] !== null &&
+        allParams[key] !== ""
+      ) {
+        keyParts.push(`${key}:${allParams[key]}`);
+      }
+    });
+
+  return keyParts.join(":");
 };
 
 // Send a new message to a user using API key
@@ -37,7 +53,7 @@ export const sendMessage = async (req, res) => {
     });
 
     // Invalidate user's message cache when a new message is sent
-    const userMessagesCachePattern = `user_messages:*${receiver._id}*`;
+    const userMessagesCachePattern = `user_messages:userId:${receiver._id}*`;
     const keys = await redisClient.keys(userMessagesCachePattern);
     if (keys.length > 0) {
       await redisClient.del(keys);
@@ -140,7 +156,7 @@ export const markMessageAsRead = async (req, res) => {
     );
 
     // Invalidate user's message cache when message is marked as read
-    const userMessagesCachePattern = `user_messages:*${req.user.id}*`;
+    const userMessagesCachePattern = `user_messages:userId:${req.user.id}*`;
     const keys = await redisClient.keys(userMessagesCachePattern);
     if (keys.length > 0) {
       await redisClient.del(keys);
@@ -175,7 +191,7 @@ export const deleteMessage = async (req, res) => {
     await Message.findByIdAndDelete(id);
 
     // Invalidate user's message cache when message is deleted
-    const userMessagesCachePattern = `user_messages:*${req.user.id}*`;
+    const userMessagesCachePattern = `user_messages:userId:${req.user.id}*`;
     const keys = await redisClient.keys(userMessagesCachePattern);
     if (keys.length > 0) {
       await redisClient.del(keys);

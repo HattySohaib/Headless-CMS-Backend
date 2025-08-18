@@ -4,13 +4,29 @@ import View from "../models/View.js";
 import Like from "../models/Like.js";
 import { errorResponse, successResponse } from "../utils/responseHelpers.js";
 import { redisClient } from "../services/redis.js";
-import crypto from "crypto";
 
 //helper functions for caching
 const createCacheKey = (prefix, userId, params = {}) => {
-  const hash = crypto.createHash("sha256");
-  hash.update(JSON.stringify({ userId, ...params }));
-  return `${prefix}:${hash.digest("hex")}`;
+  const allParams = { userId, ...params };
+
+  if (Object.keys(allParams).length === 0) {
+    return prefix;
+  }
+
+  const keyParts = [prefix];
+  Object.keys(allParams)
+    .sort()
+    .forEach((key) => {
+      if (
+        allParams[key] !== undefined &&
+        allParams[key] !== null &&
+        allParams[key] !== ""
+      ) {
+        keyParts.push(`${key}:${allParams[key]}`);
+      }
+    });
+
+  return keyParts.join(":");
 };
 
 // Helper function to get start of day for a given date

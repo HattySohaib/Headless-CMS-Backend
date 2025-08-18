@@ -11,6 +11,15 @@ import {
   unauthorizedResponse,
   validationErrorResponse,
 } from "../utils/responseHelpers.js";
+import { redisClient } from "../services/redis.js";
+import crypto from "crypto";
+
+//helper functions for caching
+const createCacheKey = (prefix, params = {}) => {
+  const hash = crypto.createHash("sha256");
+  hash.update(JSON.stringify(params));
+  return `${prefix}:${hash.digest("hex")}`;
+};
 
 const bucketName = process.env.BUCKET_NAME;
 
@@ -156,6 +165,15 @@ export const editUser = async (req, res) => {
       runValidators: true,
     });
 
+    // Invalidate user cache when user is updated
+    await redisClient.del(createCacheKey("user", { id }));
+    // Also invalidate users list cache (could use pattern delete for efficiency)
+    const usersCachePattern = "users:*";
+    const keys = await redisClient.keys(usersCachePattern);
+    if (keys.length > 0) {
+      await redisClient.del(keys);
+    }
+
     return successResponse(res, "User updated successfully", 200);
   } catch (err) {
     return errorResponse(res, "Failed to update user", 500, {
@@ -167,6 +185,18 @@ export const editUser = async (req, res) => {
 export const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
+    const cacheKey = createCacheKey("user", { id });
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "User retrieved successfully (cache)",
+        200
+      );
+    }
 
     let user = await User.findById(id).select("-passwordHash -apiKey"); // Exclude password hash
 
@@ -177,6 +207,9 @@ export const getUserById = async (req, res) => {
     let profileImageUrl = await getObject(bucketName, user.profileImageUrl);
     user.profileImageUrl = profileImageUrl;
 
+    // Cache for 15 minutes (900 seconds) - user data changes moderately
+    await redisClient.set(cacheKey, JSON.stringify(user), "EX", 900);
+
     return successResponse(res, user, "User retrieved successfully", 200);
   } catch (err) {
     return errorResponse(res, "Server error", 500);
@@ -185,6 +218,19 @@ export const getUserById = async (req, res) => {
 
 export const getUsers = async (req, res) => {
   try {
+    const cacheKey = createCacheKey("users", req.query);
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Users retrieved successfully (cache)",
+        200
+      );
+    }
+
     // Create base query - exclude password hash
     const baseQuery = User.find().select("-passwordHash");
 
@@ -228,22 +274,22 @@ export const getUsers = async (req, res) => {
       })
     );
 
-    return successResponse(
-      res,
-      {
-        users: updatedUsers,
-        pagination: {
-          currentPage: page,
-          totalPages,
-          totalUsers,
-          limit,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1,
-        },
+    const data = {
+      users: updatedUsers,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalUsers,
+        limit,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
       },
-      "Users retrieved successfully",
-      200
-    );
+    };
+
+    // Cache for 10 minutes (600 seconds) - user listings change moderately
+    await redisClient.set(cacheKey, JSON.stringify(data), "EX", 600);
+
+    return successResponse(res, data, "Users retrieved successfully", 200);
   } catch (err) {
     console.error(err);
     return errorResponse(res, "Server error", 500, err);
@@ -274,6 +320,9 @@ export const updatePassword = async (req, res) => {
     user.passwordHash = hashedPassword;
     await user.save();
 
+    // Invalidate user cache when password is updated
+    await redisClient.del(createCacheKey("user", { id }));
+
     return successResponse(res, null, "Password updated successfully", 200);
   } catch (error) {
     console.error(error);
@@ -284,21 +333,34 @@ export const updatePassword = async (req, res) => {
 export const checkUsername = async (req, res) => {
   try {
     const { username } = req.query;
+    const cacheKey = createCacheKey("username_check", { username });
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Username checked successfully (cache)",
+        200
+      );
+    }
+
     // Validation is now handled by middleware (userValidation.checkUsername)
 
     // Check availability in database
     const exists = await User.exists({ username });
 
-    return successResponse(
-      res,
-      {
-        username,
-        available: !exists,
-        valid: true,
-      },
-      "Username checked successfully",
-      200
-    );
+    const result = {
+      username,
+      available: !exists,
+      valid: true,
+    };
+
+    // Cache for 5 minutes (300 seconds) - username availability should be fresh
+    await redisClient.set(cacheKey, JSON.stringify(result), "EX", 300);
+
+    return successResponse(res, result, "Username checked successfully", 200);
   } catch (error) {
     console.error("Error checking username:", error);
     return errorResponse(res, "Failed to check username", 500, error);

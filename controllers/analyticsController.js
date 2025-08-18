@@ -3,6 +3,15 @@ import Message from "../models/Messages.js";
 import View from "../models/View.js";
 import Like from "../models/Like.js";
 import { errorResponse, successResponse } from "../utils/responseHelpers.js";
+import { redisClient } from "../services/redis.js";
+import crypto from "crypto";
+
+//helper functions for caching
+const createCacheKey = (prefix, userId, params = {}) => {
+  const hash = crypto.createHash("sha256");
+  hash.update(JSON.stringify({ userId, ...params }));
+  return `${prefix}:${hash.digest("hex")}`;
+};
 
 // Helper function to get start of day for a given date
 const getStartOfDay = (date) => {
@@ -69,6 +78,18 @@ const getQuarterlyRanges = () => {
 export const getBlogStats = async (req, res) => {
   try {
     const userId = req.user.id;
+    const cacheKey = createCacheKey("blog_stats", userId);
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Blog statistics retrieved successfully (cache)",
+        200
+      );
+    }
 
     // Get basic blog counts
     const [totalBlogs, publishedBlogs, draftBlogs] = await Promise.all([
@@ -138,6 +159,9 @@ export const getBlogStats = async (req, res) => {
       topBlogs,
     };
 
+    // Cache for 5 minutes (300 seconds) - blog stats change frequently
+    await redisClient.set(cacheKey, JSON.stringify(stats), "EX", 300);
+
     return successResponse(
       res,
       stats,
@@ -152,6 +176,18 @@ export const getBlogStats = async (req, res) => {
 export const getMessageStats = async (req, res) => {
   try {
     const userId = req.user.id;
+    const cacheKey = createCacheKey("message_stats", userId);
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Message statistics retrieved successfully (cache)",
+        200
+      );
+    }
 
     // Get basic message counts
     const [totalMessages, unreadMessages] = await Promise.all([
@@ -216,6 +252,9 @@ export const getMessageStats = async (req, res) => {
       responseTime,
     };
 
+    // Cache for 2 minutes (120 seconds) - message stats need to be fresh
+    await redisClient.set(cacheKey, JSON.stringify(stats), "EX", 120);
+
     return successResponse(
       res,
       stats,
@@ -235,6 +274,18 @@ export const getMessageStats = async (req, res) => {
 export const getPerformanceMetrics = async (req, res) => {
   try {
     const userId = req.user.id;
+    const cacheKey = createCacheKey("performance_metrics", userId);
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Performance metrics retrieved successfully (cache)",
+        200
+      );
+    }
 
     // Get user's blogs
     const userBlogs = await Blog.find({ author: userId }).select(
@@ -348,6 +399,9 @@ export const getPerformanceMetrics = async (req, res) => {
       },
     };
 
+    // Cache for 10 minutes (600 seconds) - performance metrics are calculated data
+    await redisClient.set(cacheKey, JSON.stringify(metrics), "EX", 600);
+
     return successResponse(
       res,
       metrics,
@@ -368,6 +422,18 @@ export const getDailyViews = async (req, res) => {
   try {
     const userId = req.user.id; // Use authenticated user's ID
     const days = parseInt(req.query.days) || 30; // Default to last 30 days
+    const cacheKey = createCacheKey("daily_views", userId, { days });
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "User views retrieved successfully (cache)",
+        200
+      );
+    }
 
     // Calculate the start date based on the days parameter
     // Subtract (days - 1) to include today in the count
@@ -400,6 +466,9 @@ export const getDailyViews = async (req, res) => {
       },
     ]);
 
+    // Cache for 15 minutes (900 seconds) - daily views change less frequently
+    await redisClient.set(cacheKey, JSON.stringify(views), "EX", 900);
+
     return successResponse(res, views, "User views retrieved successfully");
   } catch (error) {
     return errorResponse(res, "Failed to retrieve user views", 500, error);
@@ -410,6 +479,18 @@ export const getDetailedViews = async (req, res) => {
   try {
     const userId = req.user.id; // Use authenticated user's ID
     const days = parseInt(req.query.days) || 30; // Default to last 30 days
+    const cacheKey = createCacheKey("detailed_views", userId, { days });
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "User views retrieved successfully (cache)",
+        200
+      );
+    }
 
     // Calculate the start date based on the days parameter
     const startDate = new Date();
@@ -425,6 +506,9 @@ export const getDetailedViews = async (req, res) => {
       createdAt: { $gte: startDate },
     }).populate("blog", "title");
 
+    // Cache for 10 minutes (600 seconds) - detailed views with population
+    await redisClient.set(cacheKey, JSON.stringify(views), "EX", 600);
+
     return successResponse(res, views, "User views retrieved successfully");
   } catch (error) {
     return errorResponse(res, "Failed to retrieve user views", 500, error);
@@ -434,6 +518,18 @@ export const getDetailedViews = async (req, res) => {
 export const getQuarterlyViews = async (req, res) => {
   try {
     const userId = req.user.id;
+    const cacheKey = createCacheKey("quarterly_views", userId);
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Quarterly views retrieved successfully (cache)",
+        200
+      );
+    }
 
     // Get user's blogs
     const userBlogs = await Blog.find({ author: userId }).select("_id");
@@ -456,6 +552,9 @@ export const getQuarterlyViews = async (req, res) => {
       });
     }
 
+    // Cache for 1 hour (3600 seconds) - quarterly data changes infrequently
+    await redisClient.set(cacheKey, JSON.stringify(quarterlyViews), "EX", 3600);
+
     return successResponse(
       res,
       quarterlyViews,
@@ -471,6 +570,18 @@ export const getDailyLikes = async (req, res) => {
   try {
     const userId = req.user.id; // Use authenticated user's ID
     const days = parseInt(req.query.days) || 30; // Default to last 30 days
+    const cacheKey = createCacheKey("daily_likes", userId, { days });
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "User likes retrieved successfully (cache)",
+        200
+      );
+    }
 
     // Calculate the start date based on the days parameter
     const startDate = new Date();
@@ -501,6 +612,9 @@ export const getDailyLikes = async (req, res) => {
         $sort: { _id: 1 },
       },
     ]);
+
+    // Cache for 15 minutes (900 seconds) - daily likes change moderately
+    await redisClient.set(cacheKey, JSON.stringify(likes), "EX", 900);
 
     return successResponse(res, likes, "User likes retrieved successfully");
   } catch (error) {

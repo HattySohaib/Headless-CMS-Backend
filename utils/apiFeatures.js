@@ -40,8 +40,8 @@ class APIFeatures {
       const sortBy = this.queryString.sort.split(",").join(" ");
       this.query = this.query.sort(sortBy);
     } else {
-      // Default sort (newest first)
-      this.query = this.query.sort("-createdAt");
+      // Default sort (newest updated first)
+      this.query = this.query.sort("-updatedAt");
     }
     return this;
   }

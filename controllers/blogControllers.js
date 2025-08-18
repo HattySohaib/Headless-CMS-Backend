@@ -3,6 +3,8 @@ import View from "../models/View.js";
 import Category from "../models/Category.js";
 import mongoose from "mongoose";
 
+import crypto from "crypto";
+
 import APIFeatures from "../utils/apiFeatures.js";
 import { getObject, putObject, deleteObject } from "../services/s3Service.js";
 import User from "../models/User.js";
@@ -12,8 +14,17 @@ import {
   notFoundResponse,
   successResponse,
 } from "../utils/responseHelpers.js";
+import { redisClient } from "../services/redis.js";
 
 const bucketName = process.env.BUCKET_NAME;
+
+//helper
+
+const createCacheKey = (prefix, obj) => {
+  const hash = crypto.createHash("sha256");
+  hash.update(JSON.stringify(obj));
+  return `${prefix}:${hash.digest("hex")}`;
+};
 
 export const createBlog = async (req, res) => {
   const session = await mongoose.startSession();
@@ -111,6 +122,20 @@ export const getBlogByID = async (req, res) => {
   try {
     const { id } = req.params;
 
+    const cacheKey = `blog:${id}`;
+
+    const cached = await redisClient.get(cacheKey);
+
+    if (cached) {
+      console.log("Cache hit for blog:", id);
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Blog retrieved successfully (cache)",
+        200
+      );
+    }
+
     // Find blog by ID or slug
     let blog = await Blog.findOne({
       $or: [
@@ -141,6 +166,8 @@ export const getBlogByID = async (req, res) => {
       }
     }
 
+    await redisClient.set(cacheKey, JSON.stringify(blog), "EX", 3600);
+
     return successResponse(res, blog, "Blog retrieved successfully", 200);
   } catch (error) {
     console.error("Error getting blog details:", error);
@@ -168,24 +195,26 @@ export const editBlog = async (req, res) => {
     }
 
     await session.withTransaction(async () => {
-      const updateData = {
-        content,
-        category,
-        meta,
-        tags: tags
-          ? Array.isArray(tags)
-            ? tags
-            : tags.split(",").map((tag) => tag.trim())
-          : blog.tags,
-        featured:
-          featured !== undefined
-            ? featured === "true" || featured === true
-            : blog.featured,
-        published:
-          published !== undefined
-            ? published === "true" || published === true
-            : blog.published,
-      };
+      const updateData = {};
+
+      // Only add fields to updateData if they are provided in the request
+      if (content !== undefined) updateData.content = content;
+      if (category !== undefined) updateData.category = category;
+      if (meta !== undefined) updateData.meta = meta;
+
+      if (tags !== undefined) {
+        updateData.tags = Array.isArray(tags)
+          ? tags
+          : tags.split(",").map((tag) => tag.trim());
+      }
+
+      if (featured !== undefined) {
+        updateData.featured = featured === "true" || featured === true;
+      }
+
+      if (published !== undefined) {
+        updateData.published = published === "true" || published === true;
+      }
 
       // If a new banner is uploaded, set it in updateData
       if (req.file) {
@@ -245,11 +274,17 @@ export const editBlog = async (req, res) => {
         await User.findByIdAndUpdate(blog.author, userUpdateData, { session });
       }
 
+      // Check if only published/featured fields are being updated
+      const onlyStatusFields = Object.keys(updateData).every((key) =>
+        ["published", "featured", "publishedAt"].includes(key)
+      );
+
       // Update the blog with new data within transaction
       const updatedBlog = await Blog.findByIdAndUpdate(id, updateData, {
         new: true,
         runValidators: true,
         session,
+        timestamps: !onlyStatusFields, // Don't update timestamps if only status fields changed
       }).populate("author", "username email profileImageUrl");
 
       req.updatedBlogData = updatedBlog;
@@ -259,6 +294,8 @@ export const editBlog = async (req, res) => {
     if (req.file) {
       await putObject(bucketName, req.file);
     }
+
+    await redisClient.del(`blog:${id}`);
 
     return successResponse(
       res,
@@ -294,13 +331,15 @@ export const editBlog = async (req, res) => {
 
 export const deleteBlog = async (req, res) => {
   const session = await mongoose.startSession();
+  let blog = null; // Declare blog variable in the correct scope
 
   try {
     await session.withTransaction(async () => {
       const { id } = req.params;
+      console.log("Deleting blog with ID:", id);
 
       // Check if the blog exists
-      let blog = await Blog.findById(id).session(session);
+      blog = await Blog.findById(id).session(session);
       if (!blog) {
         throw new Error("Blog not found");
       }
@@ -320,7 +359,7 @@ export const deleteBlog = async (req, res) => {
     });
 
     // Delete banner image from S3 after successful transaction
-    if (blog.banner) {
+    if (blog && blog.banner) {
       await deleteObject(bucketName, blog.banner);
     }
 
@@ -345,6 +384,19 @@ export const deleteBlog = async (req, res) => {
 
 export const getBlogs = async (req, res) => {
   try {
+    const cacheKey = createCacheKey("blogs", req.query);
+
+    const cached = await redisClient.get(cacheKey);
+
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Blogs retrieved successfully (cache)",
+        200
+      );
+    }
+
     // Create base query with population
     const baseQuery = Blog.find()
       .populate("author", "username fullName")
@@ -388,8 +440,7 @@ export const getBlogs = async (req, res) => {
       })
     );
 
-    // Send response with pagination info
-    return successResponse(res, {
+    const data = {
       blogs: updatedBlogs,
       pagination: {
         currentPage: page,
@@ -399,7 +450,13 @@ export const getBlogs = async (req, res) => {
         hasNextPage: page < totalPages,
         hasPrevPage: page > 1,
       },
-    });
+    };
+
+    //Cache before sending
+    await redisClient.set(cacheKey, JSON.stringify(data), "EX", 120);
+
+    // Send response with pagination info
+    return successResponse(res, data, "Blogs retrieved successfully", 200);
   } catch (error) {
     console.error("Error getting blogs:", error);
     return errorResponse(res, "Server error", 500, error);
@@ -421,6 +478,19 @@ export const getViewsForBlog = async (req, res) => {
 
 export const getBlogsByApiKey = async (req, res) => {
   try {
+    const cacheKey = createCacheKey("api_blogs", req.query);
+
+    const cached = await redisClient.get(cacheKey);
+
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Blogs retrieved successfully (cache)",
+        200
+      );
+    }
+
     // Create base query for published blogs with author population
     const baseQuery = Blog.find({ published: true }).populate(
       "author",
@@ -465,22 +535,23 @@ export const getBlogsByApiKey = async (req, res) => {
       })
     );
 
-    // Send response with pagination info using the standardized format
-    return successResponse(
-      res,
-      {
-        blogs: updatedBlogs,
-        pagination: {
-          currentPage: page,
-          totalPages,
-          totalBlogs,
-          limit,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1,
-        },
+    const data = {
+      blogs: updatedBlogs,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalBlogs,
+        limit,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
       },
-      "Blogs retrieved successfully"
-    );
+    };
+
+    // Cache for 5 minutes (300 seconds) - API blogs should be relatively fresh
+    await redisClient.set(cacheKey, JSON.stringify(data), "EX", 300);
+
+    // Send response with pagination info using the standardized format
+    return successResponse(res, data, "Blogs retrieved successfully");
   } catch (error) {
     console.error("Error getting blogs:", error);
     return errorResponse(res, "Server error", 500, error);

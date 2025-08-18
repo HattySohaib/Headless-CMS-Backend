@@ -6,10 +6,36 @@ import {
   successResponse,
   validationErrorResponse,
 } from "../utils/responseHelpers.js";
+import { redisClient } from "../services/redis.js";
+import crypto from "crypto";
+
+//helper functions for caching
+const createCacheKey = (prefix, params = {}) => {
+  const hash = crypto.createHash("sha256");
+  hash.update(JSON.stringify(params));
+  return `${prefix}:${hash.digest("hex")}`;
+};
 
 export const getCategories = async (req, res) => {
   try {
+    const cacheKey = createCacheKey("categories");
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Categories retrieved successfully (cache)",
+        200
+      );
+    }
+
     let categories = await Category.find({}).sort({ name: 1 });
+
+    // Cache for 30 minutes (1800 seconds) - categories don't change frequently
+    await redisClient.set(cacheKey, JSON.stringify(categories), "EX", 1800);
+
     return successResponse(
       res,
       categories,
@@ -41,6 +67,9 @@ export const createCategory = async (req, res) => {
     const newCategory = await Category.create({
       value,
     });
+
+    // Invalidate categories cache when new category is created
+    await redisClient.del(createCacheKey("categories"));
 
     return successResponse(
       res,
@@ -85,6 +114,9 @@ export const updateCategory = async (req, res) => {
       { new: true, runValidators: true }
     );
 
+    // Invalidate categories cache when category is updated
+    await redisClient.del(createCacheKey("categories"));
+
     return successResponse(
       res,
       updatedCategory,
@@ -119,6 +151,9 @@ export const deleteCategory = async (req, res) => {
 
     // Delete the category
     await Category.findByIdAndDelete(id);
+
+    // Invalidate categories cache when category is deleted
+    await redisClient.del(createCacheKey("categories"));
 
     return successResponse(res, null, "Category deleted successfully");
   } catch (error) {

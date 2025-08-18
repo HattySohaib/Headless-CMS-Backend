@@ -127,7 +127,7 @@ const seedMessages = async () => {
     console.log("Connected to MongoDB");
 
     // Delete existing messages for this user (optional - remove if you want to keep existing messages)
-    const receiverId = "689a6bae15e5238ca55281eb";
+    const receiverId = "68a0d5fc0335e5520ddd6d98";
     await Message.deleteMany({ receiverId });
     console.log("Cleared existing messages for the user");
 

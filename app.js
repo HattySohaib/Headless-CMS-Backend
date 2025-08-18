@@ -4,6 +4,7 @@ import cors from "cors";
 
 import express from "express";
 import { connectDb } from "./config/db.js";
+import { redisClient } from "./services/redis.js";
 
 import blogRoutes from "./routes/blogRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
@@ -34,6 +35,7 @@ const PORT = process.env.PORT || 5000;
 const start = async () => {
   try {
     connectDb(process.env.MONGO_URL);
+    await redisClient.connect();
     app.listen(PORT, () =>
       console.log(`Server running successfully on port ${PORT}`)
     );

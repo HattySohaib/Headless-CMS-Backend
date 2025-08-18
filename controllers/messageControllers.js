@@ -1,11 +1,16 @@
 import Message from "../models/Messages.js";
 import User from "../models/User.js";
-import {
-  errorResponse,
-  successResponse,
-  validationErrorResponse,
-} from "../utils/responseHelpers.js";
+import { errorResponse, successResponse } from "../utils/responseHelpers.js";
 import APIFeatures from "../utils/apiFeatures.js";
+import { redisClient } from "../services/redis.js";
+import crypto from "crypto";
+
+//helper functions for caching
+const createCacheKey = (prefix, userId, params = {}) => {
+  const hash = crypto.createHash("sha256");
+  hash.update(JSON.stringify({ userId, ...params }));
+  return `${prefix}:${hash.digest("hex")}`;
+};
 
 // Send a new message to a user using API key
 export const sendMessage = async (req, res) => {
@@ -31,6 +36,15 @@ export const sendMessage = async (req, res) => {
       read: false,
     });
 
+    // Invalidate user's message cache when a new message is sent
+    const userMessagesCachePattern = `user_messages:*${receiver._id}*`;
+    const keys = await redisClient.keys(userMessagesCachePattern);
+    if (keys.length > 0) {
+      await redisClient.del(keys);
+    }
+    // Also invalidate unread count cache
+    await redisClient.del(createCacheKey("unread_count", receiver._id));
+
     return successResponse(res, newMessage, "Message sent successfully", 201);
   } catch (error) {
     return errorResponse(res, "Failed to send message", 500, error);
@@ -42,6 +56,18 @@ export const getUserMessages = async (req, res) => {
   try {
     // Use the authenticated user's ID
     const userId = req.user.id;
+    const cacheKey = createCacheKey("user_messages", userId, req.query);
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Messages retrieved successfully (cache)",
+        200
+      );
+    }
 
     // Create base query to get messages for this user
     const baseQuery = Message.find({ receiverId: userId });
@@ -68,21 +94,22 @@ export const getUserMessages = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const totalPages = Math.ceil(totalMessages / limit);
 
-    return successResponse(
-      res,
-      {
-        messages,
-        pagination: {
-          currentPage: page,
-          totalPages,
-          totalMessages: totalMessages,
-          limit,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1,
-        },
+    const data = {
+      messages,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalMessages: totalMessages,
+        limit,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
       },
-      "Messages retrieved successfully"
-    );
+    };
+
+    // Cache for 3 minutes (180 seconds) - messages should be relatively fresh
+    await redisClient.set(cacheKey, JSON.stringify(data), "EX", 180);
+
+    return successResponse(res, data, "Messages retrieved successfully");
   } catch (error) {
     return errorResponse(res, "Failed to retrieve messages", 500, error);
   }
@@ -112,6 +139,15 @@ export const markMessageAsRead = async (req, res) => {
       { new: true }
     );
 
+    // Invalidate user's message cache when message is marked as read
+    const userMessagesCachePattern = `user_messages:*${req.user.id}*`;
+    const keys = await redisClient.keys(userMessagesCachePattern);
+    if (keys.length > 0) {
+      await redisClient.del(keys);
+    }
+    // Also invalidate unread count cache
+    await redisClient.del(createCacheKey("unread_count", req.user.id));
+
     return successResponse(res, updatedMessage, "Message marked as read");
   } catch (error) {
     return errorResponse(res, "Failed to update message", 500, error);
@@ -138,6 +174,17 @@ export const deleteMessage = async (req, res) => {
     // Delete the message
     await Message.findByIdAndDelete(id);
 
+    // Invalidate user's message cache when message is deleted
+    const userMessagesCachePattern = `user_messages:*${req.user.id}*`;
+    const keys = await redisClient.keys(userMessagesCachePattern);
+    if (keys.length > 0) {
+      await redisClient.del(keys);
+    }
+    // Also invalidate unread count cache if it was unread
+    if (!message.read) {
+      await redisClient.del(createCacheKey("unread_count", req.user.id));
+    }
+
     return successResponse(res, null, "Message deleted successfully");
   } catch (error) {
     return errorResponse(res, "Failed to delete message", 500, error);
@@ -149,6 +196,18 @@ export const getUnreadMessageCount = async (req, res) => {
   try {
     // Use the authenticated user's ID
     const { id } = req.user;
+    const cacheKey = createCacheKey("unread_count", id);
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Unread message count retrieved successfully (cache)",
+        200
+      );
+    }
 
     // Count unread messages
     const unreadCount = await Message.countDocuments({
@@ -156,11 +215,14 @@ export const getUnreadMessageCount = async (req, res) => {
       read: false,
     });
 
-    console.log("Unread message count:", unreadCount);
+    const result = { unreadCount };
+
+    // Cache for 2 minutes (120 seconds) - unread count should be fresh
+    await redisClient.set(cacheKey, JSON.stringify(result), "EX", 120);
 
     return successResponse(
       res,
-      { unreadCount },
+      result,
       "Unread message count retrieved successfully"
     );
   } catch (error) {

@@ -4,3 +4,11 @@ Dockerfile
 .dockerignore
 .git
 .env
+*.md
+seedBlog.js
+seedBlogsAtlas.js
+seedLikes.js
+seedViews.js
+seedUsers.js
+seedMessages.js
+!.gitkeep

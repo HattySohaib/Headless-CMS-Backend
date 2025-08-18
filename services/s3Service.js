@@ -18,13 +18,14 @@ export const putObject = async (bucketName, file) => {
   await s3.send(putCommand);
 };
 
-export const getObject = async (bucketName, key) => {
+export const getObject = async (bucketName, key, expiresIn = 3600) => {
   const params = {
     Bucket: bucketName,
     Key: key,
   };
   const getCommand = new GetObjectCommand(params);
-  const url = await getSignedUrl(s3, getCommand);
+  // Set expiration based on parameter, default to 1 hour
+  const url = await getSignedUrl(s3, getCommand, { expiresIn });
   return url;
 };
 

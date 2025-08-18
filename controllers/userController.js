@@ -18,15 +18,21 @@ const createCacheKey = (prefix, params = {}) => {
   if (Object.keys(params).length === 0) {
     return prefix;
   }
-  
+
   const keyParts = [prefix];
-  Object.keys(params).sort().forEach(key => {
-    if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
-      keyParts.push(`${key}:${params[key]}`);
-    }
-  });
-  
-  return keyParts.join(':');
+  Object.keys(params)
+    .sort()
+    .forEach((key) => {
+      if (
+        params[key] !== undefined &&
+        params[key] !== null &&
+        params[key] !== ""
+      ) {
+        keyParts.push(`${key}:${params[key]}`);
+      }
+    });
+
+  return keyParts.join(":");
 };
 
 const bucketName = process.env.BUCKET_NAME;
@@ -212,11 +218,16 @@ export const getUserById = async (req, res) => {
       return notFoundResponse(res, "User");
     }
 
-    let profileImageUrl = await getObject(bucketName, user.profileImageUrl);
+    // Set expiration to 1000s (slightly longer than cache TTL of 900s)
+    let profileImageUrl = await getObject(
+      bucketName,
+      user.profileImageUrl,
+      1000
+    );
     user.profileImageUrl = profileImageUrl;
 
     // Cache for 15 minutes (900 seconds) - user data changes moderately
-    await redisClient.set(cacheKey, JSON.stringify(user), "EX", 900);
+    await redisClient.set(cacheKey, JSON.stringify(user), { EX: 900 });
 
     return successResponse(res, user, "User retrieved successfully", 200);
   } catch (err) {
@@ -268,9 +279,11 @@ export const getUsers = async (req, res) => {
       users.map(async (user) => {
         if (user.profileImageUrl) {
           try {
+            // Set expiration to 700s (slightly longer than cache TTL of 600s)
             let profileImageUrl = await getObject(
               bucketName,
-              user.profileImageUrl
+              user.profileImageUrl,
+              700
             );
             user.profileImageUrl = profileImageUrl;
           } catch (error) {
@@ -295,7 +308,7 @@ export const getUsers = async (req, res) => {
     };
 
     // Cache for 10 minutes (600 seconds) - user listings change moderately
-    await redisClient.set(cacheKey, JSON.stringify(data), "EX", 600);
+    await redisClient.set(cacheKey, JSON.stringify(data), { EX: 600 });
 
     return successResponse(res, data, "Users retrieved successfully", 200);
   } catch (err) {
@@ -366,7 +379,7 @@ export const checkUsername = async (req, res) => {
     };
 
     // Cache for 5 minutes (300 seconds) - username availability should be fresh
-    await redisClient.set(cacheKey, JSON.stringify(result), "EX", 300);
+    await redisClient.set(cacheKey, JSON.stringify(result), { EX: 300 });
 
     return successResponse(res, result, "Username checked successfully", 200);
   } catch (error) {

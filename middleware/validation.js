@@ -243,8 +243,7 @@ export const blogValidation = {
       .withMessage("Blog title must be at least 5 characters")
       .isLength({ max: 100 })
       .withMessage("Blog title must not exceed 100 characters")
-      .trim()
-      .escape(), // Sanitize: Escape HTML special chars
+      .trim(),
 
     body("content")
       .optional()

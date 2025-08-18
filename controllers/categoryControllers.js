@@ -48,7 +48,7 @@ export const getCategories = async (req, res) => {
     let categories = await Category.find({}).sort({ name: 1 });
 
     // Cache for 30 minutes (1800 seconds) - categories don't change frequently
-    await redisClient.set(cacheKey, JSON.stringify(categories), "EX", 1800);
+    await redisClient.set(cacheKey, JSON.stringify(categories), { EX: 1800 });
 
     return successResponse(
       res,

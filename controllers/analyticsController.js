@@ -176,7 +176,7 @@ export const getBlogStats = async (req, res) => {
     };
 
     // Cache for 5 minutes (300 seconds) - blog stats change frequently
-    await redisClient.set(cacheKey, JSON.stringify(stats), "EX", 300);
+    await redisClient.set(cacheKey, JSON.stringify(stats), { EX: 300 });
 
     return successResponse(
       res,
@@ -269,7 +269,7 @@ export const getMessageStats = async (req, res) => {
     };
 
     // Cache for 2 minutes (120 seconds) - message stats need to be fresh
-    await redisClient.set(cacheKey, JSON.stringify(stats), "EX", 120);
+    await redisClient.set(cacheKey, JSON.stringify(stats), { EX: 120 });
 
     return successResponse(
       res,
@@ -416,7 +416,7 @@ export const getPerformanceMetrics = async (req, res) => {
     };
 
     // Cache for 10 minutes (600 seconds) - performance metrics are calculated data
-    await redisClient.set(cacheKey, JSON.stringify(metrics), "EX", 600);
+    await redisClient.set(cacheKey, JSON.stringify(metrics), { EX: 600 });
 
     return successResponse(
       res,
@@ -483,7 +483,7 @@ export const getDailyViews = async (req, res) => {
     ]);
 
     // Cache for 15 minutes (900 seconds) - daily views change less frequently
-    await redisClient.set(cacheKey, JSON.stringify(views), "EX", 900);
+    await redisClient.set(cacheKey, JSON.stringify(views), { EX: 900 });
 
     return successResponse(res, views, "User views retrieved successfully");
   } catch (error) {
@@ -523,7 +523,7 @@ export const getDetailedViews = async (req, res) => {
     }).populate("blog", "title");
 
     // Cache for 10 minutes (600 seconds) - detailed views with population
-    await redisClient.set(cacheKey, JSON.stringify(views), "EX", 600);
+    await redisClient.set(cacheKey, JSON.stringify(views), { EX: 600 });
 
     return successResponse(res, views, "User views retrieved successfully");
   } catch (error) {
@@ -569,7 +569,9 @@ export const getQuarterlyViews = async (req, res) => {
     }
 
     // Cache for 1 hour (3600 seconds) - quarterly data changes infrequently
-    await redisClient.set(cacheKey, JSON.stringify(quarterlyViews), "EX", 3600);
+    await redisClient.set(cacheKey, JSON.stringify(quarterlyViews), {
+      EX: 3600,
+    });
 
     return successResponse(
       res,
@@ -630,7 +632,7 @@ export const getDailyLikes = async (req, res) => {
     ]);
 
     // Cache for 15 minutes (900 seconds) - daily likes change moderately
-    await redisClient.set(cacheKey, JSON.stringify(likes), "EX", 900);
+    await redisClient.set(cacheKey, JSON.stringify(likes), { EX: 900 });
 
     return successResponse(res, likes, "User likes retrieved successfully");
   } catch (error) {

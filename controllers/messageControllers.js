@@ -123,7 +123,7 @@ export const getUserMessages = async (req, res) => {
     };
 
     // Cache for 3 minutes (180 seconds) - messages should be relatively fresh
-    await redisClient.set(cacheKey, JSON.stringify(data), "EX", 180);
+    await redisClient.set(cacheKey, JSON.stringify(data), { EX: 180 });
 
     return successResponse(res, data, "Messages retrieved successfully");
   } catch (error) {
@@ -234,7 +234,7 @@ export const getUnreadMessageCount = async (req, res) => {
     const result = { unreadCount };
 
     // Cache for 2 minutes (120 seconds) - unread count should be fresh
-    await redisClient.set(cacheKey, JSON.stringify(result), "EX", 120);
+    await redisClient.set(cacheKey, JSON.stringify(result), { EX: 120 });
 
     return successResponse(
       res,

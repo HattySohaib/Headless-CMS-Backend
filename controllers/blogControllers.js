@@ -134,7 +134,6 @@ export const getBlogByID = async (req, res) => {
     const cached = await redisClient.get(cacheKey);
 
     if (cached) {
-      console.log("Cache hit for blog:", id);
       return successResponse(
         res,
         JSON.parse(cached),
@@ -165,7 +164,8 @@ export const getBlogByID = async (req, res) => {
     // Get S3 image URL if banner exists
     if (blog.banner) {
       try {
-        let imageUri = await getObject(bucketName, blog.banner);
+        // Set expiration to 4000s (slightly longer than cache TTL of 3600s)
+        let imageUri = await getObject(bucketName, blog.banner, 4000);
         blog.banner = imageUri;
       } catch (error) {
         console.error("Error getting banner image:", error);
@@ -173,7 +173,7 @@ export const getBlogByID = async (req, res) => {
       }
     }
 
-    await redisClient.set(cacheKey, JSON.stringify(blog), "EX", 3600);
+    await redisClient.set(cacheKey, JSON.stringify(blog), { EX: 3600 });
 
     return successResponse(res, blog, "Blog retrieved successfully", 200);
   } catch (error) {
@@ -290,10 +290,8 @@ export const editBlog = async (req, res) => {
 
     // Invalidate all blog list caches for this user
     const userId = req.user.id;
-    console.log("Invalidating blog caches for user:", userId);
     const userBlogCachePattern = `blogs:*author:${userId}*`;
     const userBlogKeys = await redisClient.keys(userBlogCachePattern);
-    console.log("User blog cache keys:", userBlogKeys);
     if (userBlogKeys.length > 0) {
       await redisClient.del(userBlogKeys);
     }
@@ -456,7 +454,8 @@ export const getBlogs = async (req, res) => {
       blogs.map(async (blog) => {
         if (blog.banner) {
           try {
-            let bannerUrl = await getObject(bucketName, blog.banner);
+            // Set expiration to 200s (slightly longer than cache TTL of 120s)
+            let bannerUrl = await getObject(bucketName, blog.banner, 200);
             blog.banner = bannerUrl;
           } catch (error) {
             console.error("Error getting banner image:", error);
@@ -480,7 +479,8 @@ export const getBlogs = async (req, res) => {
     };
 
     //Cache before sending
-    await redisClient.set(cacheKey, JSON.stringify(data), "EX", 120);
+    await redisClient.set(cacheKey, JSON.stringify(data), { EX: 120 });
+    console.log("Blog cache set:", cacheKey);
 
     // Send response with pagination info
     return successResponse(res, data, "Blogs retrieved successfully", 200);
@@ -551,7 +551,8 @@ export const getBlogsByApiKey = async (req, res) => {
       blogs.map(async (blog) => {
         if (blog.banner) {
           try {
-            let bannerUrl = await getObject(bucketName, blog.banner);
+            // Set expiration to 400s (slightly longer than cache TTL of 300s)
+            let bannerUrl = await getObject(bucketName, blog.banner, 400);
             blog.banner = bannerUrl;
           } catch (error) {
             console.error("Error getting banner image:", error);
@@ -575,7 +576,7 @@ export const getBlogsByApiKey = async (req, res) => {
     };
 
     // Cache for 5 minutes (300 seconds) - API blogs should be relatively fresh
-    await redisClient.set(cacheKey, JSON.stringify(data), "EX", 300);
+    await redisClient.set(cacheKey, JSON.stringify(data), { EX: 300 });
 
     // Send response with pagination info using the standardized format
     return successResponse(res, data, "Blogs retrieved successfully");

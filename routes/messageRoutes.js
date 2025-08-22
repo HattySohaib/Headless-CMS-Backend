@@ -8,11 +8,12 @@ import {
   getUnreadMessageCount,
 } from "../controllers/messageControllers.js";
 import { messageValidation } from "../middleware/validation.js";
+import apiKeyMiddleware from "../middleware/apiKeyAuth.js";
 
 const router = express.Router();
 
 // Public route for sending messages (e.g., contact form)
-router.post("/", messageValidation, sendMessage);
+router.post("/", apiKeyMiddleware, sendMessage);
 
 // Protected routes requiring authentication
 router.get("/", authMiddleware, getUserMessages);

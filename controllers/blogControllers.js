@@ -156,9 +156,17 @@ export const getBlogByID = async (req, res) => {
 
     // Simple view tracking without transaction (acceptable for analytics)
     await Promise.all([
-      Blog.findByIdAndUpdate(blog._id, { $inc: { viewsCount: 1 } }),
+      Blog.findByIdAndUpdate(
+        blog._id,
+        { $inc: { viewsCount: 1 } },
+        { timestamps: false }
+      ),
       View.create({ blog: blog._id }),
-      User.findByIdAndUpdate(blog.author, { $inc: { viewCount: 1 } }),
+      User.findByIdAndUpdate(
+        blog.author,
+        { $inc: { viewCount: 1 } },
+        { timestamps: false }
+      ),
     ]);
 
     // Get S3 image URL if banner exists
@@ -171,6 +179,17 @@ export const getBlogByID = async (req, res) => {
         console.error("Error getting banner image:", error);
         // Keep original banner value if S3 fails
       }
+    }
+
+    try {
+      let imageUri = await getObject(
+        bucketName,
+        blog.author.profileImageUrl,
+        4000
+      );
+      blog.author.profileImageUrl = imageUri;
+    } catch (error) {
+      console.error("Error getting profile image:", error);
     }
 
     await redisClient.set(cacheKey, JSON.stringify(blog), { EX: 3600 });

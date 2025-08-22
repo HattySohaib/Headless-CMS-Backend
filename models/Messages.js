@@ -21,7 +21,7 @@ const messageSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    subject: {
+    name: {
       type: String,
       default: "",
       trim: true,

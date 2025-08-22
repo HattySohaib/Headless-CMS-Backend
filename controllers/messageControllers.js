@@ -31,10 +31,10 @@ const createCacheKey = (prefix, userId, params = {}) => {
 // Send a new message to a user using API key
 export const sendMessage = async (req, res) => {
   try {
-    const { senderEmail, receiverAPIKey, message, subject } = req.body;
-
+    const { senderEmail, message, name } = req.body;
+    const { id } = req.user;
     // Find user by API key
-    const receiver = await User.findOne({ apiKey: receiverAPIKey });
+    const receiver = await User.findById(id);
     if (!receiver) {
       return errorResponse(
         res,
@@ -46,9 +46,9 @@ export const sendMessage = async (req, res) => {
     // Create the message
     const newMessage = await Message.create({
       senderEmail,
-      receiverId: receiver._id, // Use the user ID we found with the API key
+      receiverId: receiver._id,
       message,
-      subject: subject || "",
+      name,
       read: false,
     });
 

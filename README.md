@@ -137,13 +137,13 @@ Thanks to Docker, setting up the entire backend environment—including the Node
 git clone [https://github.com/HattySohaib/irada-backend.git](https://github.com/HattySohaib/irada-backend.git)
 cd irada-backend
 ```
-2. Configure environment variables: Copy .env.example to .env and edit as needed:
+**2. Configure environment variables: Copy .env.example to .env and edit as needed:**
 
 ```Bash
 
 cp .env.example .env
 ```
-3. Start all services locally:
+**3. Start all services locally:**
 ```Bash
 
 docker-compose up --build

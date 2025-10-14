@@ -8,6 +8,7 @@ import {
   checkUsername,
   getUserById,
   updatePassword,
+  getTopAuthorsWeek,
 } from "../controllers/userController.js";
 
 import { loginUser } from "../controllers/authController.js";
@@ -17,6 +18,7 @@ import { userValidation, authValidation } from "../middleware/validation.js";
 const router = express.Router();
 
 router.get("/", getUsers);
+router.get("/top-authors/week", getTopAuthorsWeek);
 router.get("/check-username", userValidation.checkUsername, checkUsername);
 router.get("/:id", getUserById);
 

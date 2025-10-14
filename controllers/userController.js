@@ -1,6 +1,8 @@
 import bcrypt from "bcrypt";
 import mongoose from "mongoose";
 import User from "../models/User.js";
+import View from "../models/View.js";
+import Blog from "../models/Blog.js";
 import APIFeatures from "../utils/apiFeatures.js";
 
 import { getObject, putObject } from "../services/s3Service.js";
@@ -184,8 +186,10 @@ export const editUser = async (req, res) => {
     // Also invalidate users list cache (could use pattern delete for efficiency)
     const usersCachePattern = "users:*";
     const keys = await redisClient.keys(usersCachePattern);
-    if (keys.length > 0) {
-      await redisClient.del(keys);
+    if (keys && keys.length > 0) {
+      for (const key of keys) {
+        await redisClient.del(key);
+      }
     }
 
     return successResponse(res, "User updated successfully", 200);
@@ -385,5 +389,135 @@ export const checkUsername = async (req, res) => {
   } catch (error) {
     console.error("Error checking username:", error);
     return errorResponse(res, "Failed to check username", 500, error);
+  }
+};
+
+// Get top 5 most viewed authors of the week
+export const getTopAuthorsWeek = async (req, res) => {
+  try {
+    const cacheKey = "top_authors:week";
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Top authors retrieved successfully (cache)",
+        200
+      );
+    }
+
+    // Get start of this week (Monday)
+    const startOfWeek = new Date();
+    const dayOfWeek = startOfWeek.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Sunday = 0, Monday = 1
+    startOfWeek.setDate(startOfWeek.getDate() - daysToMonday);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    console.log("Fetching top authors from:", startOfWeek);
+
+    // Aggregate views from this week, get blogs, group by author
+    const topAuthors = await View.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startOfWeek },
+        },
+      },
+      {
+        $lookup: {
+          from: "blogs",
+          localField: "blog",
+          foreignField: "_id",
+          as: "blogData",
+        },
+      },
+      {
+        $unwind: {
+          path: "$blogData",
+          preserveNullAndEmptyArrays: false, // Remove if blog not found
+        },
+      },
+      {
+        $match: {
+          "blogData.published": true,
+        },
+      },
+      {
+        $group: {
+          _id: "$blogData.author",
+          weeklyViews: { $sum: 1 },
+        },
+      },
+      {
+        $sort: { weeklyViews: -1 },
+      },
+      {
+        $limit: 5,
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "userData",
+        },
+      },
+      {
+        $unwind: {
+          path: "$userData",
+          preserveNullAndEmptyArrays: false, // Remove if user not found
+        },
+      },
+      {
+        $project: {
+          _id: "$userData._id",
+          username: "$userData.username",
+          fullName: "$userData.fullName",
+          bio: "$userData.bio",
+          profileImageUrl: "$userData.profileImageUrl",
+          blogCount: "$userData.blogCount",
+          totalViews: "$userData.viewCount",
+          weeklyViews: 1,
+        },
+      },
+    ]);
+
+    console.log(`Found ${topAuthors.length} top authors`);
+
+    const bucketName = process.env.BUCKET_NAME;
+
+    // Process S3 URLs for profile images
+    const updatedAuthors = await Promise.all(
+      topAuthors.map(async (author) => {
+        if (author.profileImageUrl) {
+          try {
+            author.profileImageUrl = await getObject(
+              bucketName,
+              author.profileImageUrl,
+              2000 // Cache for ~33 minutes, longer than Redis cache
+            );
+          } catch (error) {
+            console.error("Error getting profile image:", error);
+          }
+        }
+        return author;
+      })
+    );
+
+    const data = {
+      authors: updatedAuthors,
+      period: "week",
+      weekStart: startOfWeek.toISOString(),
+      generatedAt: new Date().toISOString(),
+    };
+
+    // Cache for 30 minutes (1800 seconds) - top authors can be slightly stale
+    await redisClient.set(cacheKey, JSON.stringify(data), { EX: 1800 });
+
+    return successResponse(res, data, "Top authors retrieved successfully");
+  } catch (error) {
+    console.error("Error getting top authors:", error);
+    return errorResponse(res, "Failed to retrieve top authors", 500, error);
   }
 };

@@ -311,15 +311,28 @@ export const editBlog = async (req, res) => {
     const userId = req.user.id;
     const userBlogCachePattern = `blogs:*author:${userId}*`;
     const userBlogKeys = await redisClient.keys(userBlogCachePattern);
-    if (userBlogKeys.length > 0) {
-      await redisClient.del(userBlogKeys);
+    if (userBlogKeys && userBlogKeys.length > 0) {
+      for (const key of userBlogKeys) {
+        await redisClient.del(key);
+      }
     }
 
     // Also invalidate general blog list caches since the blog content might affect ordering
     const generalBlogCachePattern = `blogs:*`;
     const generalBlogKeys = await redisClient.keys(generalBlogCachePattern);
-    if (generalBlogKeys.length > 0) {
-      await redisClient.del(generalBlogKeys);
+    if (generalBlogKeys && generalBlogKeys.length > 0) {
+      for (const key of generalBlogKeys) {
+        await redisClient.del(key);
+      }
+    }
+
+    // Also invalidate api_blogs cache
+    const apiBlogCachePattern = `api_blogs:*userId:${userId}*`;
+    const apiBlogKeys = await redisClient.keys(apiBlogCachePattern);
+    if (apiBlogKeys && apiBlogKeys.length > 0) {
+      for (const key of apiBlogKeys) {
+        await redisClient.del(key);
+      }
     }
 
     return successResponse(
@@ -396,15 +409,28 @@ export const deleteBlog = async (req, res) => {
     // Invalidate all blog list caches for this user
     const userBlogCachePattern = `blogs:*author:${userId}*`;
     const userBlogKeys = await redisClient.keys(userBlogCachePattern);
-    if (userBlogKeys.length > 0) {
-      await redisClient.del(userBlogKeys);
+    if (userBlogKeys && userBlogKeys.length > 0) {
+      for (const key of userBlogKeys) {
+        await redisClient.del(key);
+      }
     }
 
     // Invalidate general blog list caches
     const generalBlogCachePattern = `blogs:*`;
     const generalBlogKeys = await redisClient.keys(generalBlogCachePattern);
-    if (generalBlogKeys.length > 0) {
-      await redisClient.del(generalBlogKeys);
+    if (generalBlogKeys && generalBlogKeys.length > 0) {
+      for (const key of generalBlogKeys) {
+        await redisClient.del(key);
+      }
+    }
+
+    // Also invalidate api_blogs cache
+    const apiBlogCachePattern = `api_blogs:*userId:${userId}*`;
+    const apiBlogKeys = await redisClient.keys(apiBlogCachePattern);
+    if (apiBlogKeys && apiBlogKeys.length > 0) {
+      for (const key of apiBlogKeys) {
+        await redisClient.del(key);
+      }
     }
 
     return successResponse(res, null, "Blog deleted successfully", 200);
@@ -524,7 +550,11 @@ export const getViewsForBlog = async (req, res) => {
 
 export const getBlogsByApiKey = async (req, res) => {
   try {
-    const cacheKey = createCacheKey("api_blogs", req.query);
+    // Include user ID in cache key to ensure user-specific caching
+    const cacheKey = createCacheKey("api_blogs", {
+      ...req.query,
+      userId: req.user.id,
+    });
 
     const cached = await redisClient.get(cacheKey);
 
@@ -537,11 +567,11 @@ export const getBlogsByApiKey = async (req, res) => {
       );
     }
 
-    // Create base query for published blogs with author population
-    const baseQuery = Blog.find({ published: true }).populate(
-      "author",
-      "username email profileImageUrl"
-    );
+    // Create base query for published blogs belonging to the authenticated user
+    const baseQuery = Blog.find({
+      published: true,
+      author: req.user.id,
+    }).populate("author", "username email profileImageUrl");
 
     // Apply APIFeatures for filtering, sorting, field selection, searching, and pagination
     const features = new APIFeatures(baseQuery, req.query)
@@ -555,7 +585,10 @@ export const getBlogsByApiKey = async (req, res) => {
     let blogs = await features.query;
 
     // Get total count for pagination info (apply same filters and search but without pagination)
-    const countQuery = Blog.find({ published: true });
+    const countQuery = Blog.find({
+      published: true,
+      author: req.user.id,
+    });
     const countFeatures = new APIFeatures(countQuery, req.query)
       .filter()
       .search(["title", "content", "summary"]); // Apply same search criteria for accurate count
@@ -602,5 +635,141 @@ export const getBlogsByApiKey = async (req, res) => {
   } catch (error) {
     console.error("Error getting blogs:", error);
     return errorResponse(res, "Server error", 500, error);
+  }
+};
+
+// Get top 10 trending blogs based on today's views
+export const getTrendingBlogsToday = async (req, res) => {
+  try {
+    const cacheKey = "trending_blogs:today";
+
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return successResponse(
+        res,
+        JSON.parse(cached),
+        "Trending blogs retrieved successfully (cache)",
+        200
+      );
+    }
+
+    // Get start of today (midnight)
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    console.log("Fetching trending blogs from:", startOfToday);
+
+    // Aggregate views from today and group by blog
+    const trendingBlogs = await View.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startOfToday },
+        },
+      },
+      {
+        $group: {
+          _id: "$blog",
+          todayViews: { $sum: 1 },
+        },
+      },
+      {
+        $lookup: {
+          from: "blogs",
+          localField: "_id",
+          foreignField: "_id",
+          as: "blogData",
+        },
+      },
+      {
+        $unwind: {
+          path: "$blogData",
+          preserveNullAndEmptyArrays: false, // Remove if blog not found
+        },
+      },
+      {
+        $match: {
+          "blogData.published": true,
+        },
+      },
+      {
+        $sort: { todayViews: -1 },
+      },
+      {
+        $limit: 10,
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "blogData.author",
+          foreignField: "_id",
+          as: "authorData",
+        },
+      },
+      {
+        $unwind: {
+          path: "$authorData",
+          preserveNullAndEmptyArrays: false, // Remove if author not found
+        },
+      },
+      {
+        $project: {
+          _id: "$blogData._id",
+          title: "$blogData.title",
+          slug: "$blogData.slug",
+          banner: "$blogData.banner",
+          tags: "$blogData.tags",
+          publishedAt: "$blogData.publishedAt",
+          todayViews: 1,
+          totalViews: "$blogData.viewsCount",
+          author: {
+            _id: "$authorData._id",
+            username: "$authorData.username",
+            profileImageUrl: "$authorData.profileImageUrl",
+          },
+        },
+      },
+    ]);
+
+    console.log(`Found ${trendingBlogs.length} trending blogs`);
+
+    // Process S3 URLs for banners and profile images
+    const updatedBlogs = await Promise.all(
+      trendingBlogs.map(async (blog) => {
+        if (blog.banner) {
+          try {
+            blog.banner = await getObject(bucketName, blog.banner, 700);
+          } catch (error) {
+            console.error("Error getting banner image:", error);
+          }
+        }
+        if (blog.author.profileImageUrl) {
+          try {
+            blog.author.profileImageUrl = await getObject(
+              bucketName,
+              blog.author.profileImageUrl,
+              700
+            );
+          } catch (error) {
+            console.error("Error getting profile image:", error);
+          }
+        }
+        return blog;
+      })
+    );
+
+    const data = {
+      blogs: updatedBlogs,
+      period: "today",
+      generatedAt: new Date().toISOString(),
+    };
+
+    // Cache for 10 minutes (600 seconds) - trending data can be slightly stale
+    await redisClient.set(cacheKey, JSON.stringify(data), { EX: 600 });
+
+    return successResponse(res, data, "Trending blogs retrieved successfully");
+  } catch (error) {
+    console.error("Error getting trending blogs:", error);
+    return errorResponse(res, "Failed to retrieve trending blogs", 500, error);
   }
 };

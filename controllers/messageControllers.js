@@ -53,13 +53,21 @@ export const sendMessage = async (req, res) => {
     });
 
     // Invalidate user's message cache when a new message is sent
-    const userMessagesCachePattern = `user_messages:userId:${receiver._id}*`;
+    // Pattern needs to match sorted cache keys like: user_messages:limit:10:page:4:userId:123
+    const userMessagesCachePattern = `user_messages:*:userId:${receiver._id}*`;
     const keys = await redisClient.keys(userMessagesCachePattern);
-    if (keys.length > 0) {
-      await redisClient.del(keys);
+    if (keys && keys.length > 0) {
+      // Delete each key individually for compatibility
+      for (const key of keys) {
+        await redisClient.del(key);
+      }
     }
     // Also invalidate unread count cache
-    await redisClient.del(createCacheKey("unread_count", receiver._id));
+    const unreadCountKey = createCacheKey(
+      "unread_count",
+      receiver._id.toString()
+    );
+    await redisClient.del(unreadCountKey);
 
     return successResponse(res, newMessage, "Message sent successfully", 201);
   } catch (error) {
@@ -73,6 +81,7 @@ export const getUserMessages = async (req, res) => {
     // Use the authenticated user's ID
     const userId = req.user.id;
     const cacheKey = createCacheKey("user_messages", userId, req.query);
+    console.log("Message cache set:", cacheKey);
 
     // Check cache first
     const cached = await redisClient.get(cacheKey);
@@ -143,11 +152,6 @@ export const markMessageAsRead = async (req, res) => {
       return errorResponse(res, "Message not found", 404);
     }
 
-    // Check if user has permission to mark this message
-    if (req.user.id !== message.receiverId.toString() && !req.user.isAdmin) {
-      return errorResponse(res, "Unauthorized access", 403);
-    }
-
     // Update the message
     const updatedMessage = await Message.findByIdAndUpdate(
       id,
@@ -156,13 +160,20 @@ export const markMessageAsRead = async (req, res) => {
     );
 
     // Invalidate user's message cache when message is marked as read
-    const userMessagesCachePattern = `user_messages:userId:${req.user.id}*`;
+    // Pattern needs to match sorted cache keys like: user_messages:limit:10:page:4:userId:123
+    const userMessagesCachePattern = `user_messages:*:userId:${req.user.id}*`;
+    console.log("Invalidating cache with pattern:", userMessagesCachePattern);
     const keys = await redisClient.keys(userMessagesCachePattern);
-    if (keys.length > 0) {
-      await redisClient.del(keys);
+    if (keys && keys.length > 0) {
+      // Delete each key individually for compatibility
+      for (const key of keys) {
+        console.log("Deleting cache key:", key);
+        await redisClient.del(key);
+      }
     }
     // Also invalidate unread count cache
-    await redisClient.del(createCacheKey("unread_count", req.user.id));
+    const unreadCountKey = createCacheKey("unread_count", req.user.id);
+    await redisClient.del(unreadCountKey);
 
     return successResponse(res, updatedMessage, "Message marked as read");
   } catch (error) {
@@ -191,14 +202,19 @@ export const deleteMessage = async (req, res) => {
     await Message.findByIdAndDelete(id);
 
     // Invalidate user's message cache when message is deleted
-    const userMessagesCachePattern = `user_messages:userId:${req.user.id}*`;
+    // Pattern needs to match sorted cache keys like: user_messages:limit:10:page:4:userId:123
+    const userMessagesCachePattern = `user_messages:*:userId:${req.user.id}*`;
     const keys = await redisClient.keys(userMessagesCachePattern);
-    if (keys.length > 0) {
-      await redisClient.del(keys);
+    if (keys && keys.length > 0) {
+      // Delete each key individually for compatibility
+      for (const key of keys) {
+        await redisClient.del(key);
+      }
     }
     // Also invalidate unread count cache if it was unread
     if (!message.read) {
-      await redisClient.del(createCacheKey("unread_count", req.user.id));
+      const unreadCountKey = createCacheKey("unread_count", req.user.id);
+      await redisClient.del(unreadCountKey);
     }
 
     return successResponse(res, null, "Message deleted successfully");

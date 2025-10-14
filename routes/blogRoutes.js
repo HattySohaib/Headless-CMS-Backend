@@ -8,6 +8,7 @@ import {
   getBlogByID,
   deleteBlog,
   getViewsForBlog,
+  getTrendingBlogsToday,
 } from "../controllers/blogControllers.js";
 import authMiddleware from "../middleware/authenticate.js";
 import { blogValidation } from "../middleware/validation.js";
@@ -15,6 +16,7 @@ import { blogValidation } from "../middleware/validation.js";
 const router = express.Router();
 
 router.get("/", getBlogs);
+router.get("/trending/today", getTrendingBlogsToday);
 router.get("/:id", blogValidation.getById, getBlogByID);
 router.get("/:id/views", blogValidation.getById, getViewsForBlog);
 

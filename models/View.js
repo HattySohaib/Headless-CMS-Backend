@@ -7,4 +7,8 @@ const viewSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Index for performance optimization on trending/analytics queries
+viewSchema.index({ createdAt: -1 });
+viewSchema.index({ blog: 1, createdAt: -1 });
+
 export default mongoose.model("View", viewSchema);

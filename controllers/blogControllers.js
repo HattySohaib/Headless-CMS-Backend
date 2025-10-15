@@ -304,8 +304,17 @@ export const editBlog = async (req, res) => {
       await putObject(bucketName, req.file);
     }
 
-    // Invalidate specific blog cache
-    await redisClient.del(`blog:${id}`);
+    // Invalidate specific blog caches (both by ID and by slug)
+    const blogId = req.updatedBlogData._id;
+    const blogSlug = req.updatedBlogData.slug;
+
+    await redisClient.del(`blog:${blogId}`);
+    await redisClient.del(`blog:${blogSlug}`);
+
+    // If the slug was changed, also invalidate the old slug cache
+    if (blog.slug !== blogSlug) {
+      await redisClient.del(`blog:${blog.slug}`);
+    }
 
     // Invalidate all blog list caches for this user
     const userId = req.user.id;
@@ -402,9 +411,12 @@ export const deleteBlog = async (req, res) => {
     // Invalidate caches after successful deletion
     const { id } = req.params;
     const userId = blog.author;
+    const blogSlug = blog.slug;
 
-    // Invalidate specific blog cache
+    // Invalidate specific blog caches (both by ID and by slug)
     await redisClient.del(`blog:${id}`);
+    await redisClient.del(`blog:${blog._id}`); // In case id param is slug
+    await redisClient.del(`blog:${blogSlug}`);
 
     // Invalidate all blog list caches for this user
     const userBlogCachePattern = `blogs:*author:${userId}*`;

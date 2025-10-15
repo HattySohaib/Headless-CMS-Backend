@@ -1,6 +1,5 @@
 import Blog from "../models/Blog.js";
 import View from "../models/View.js";
-import Category from "../models/Category.js";
 import mongoose from "mongoose";
 
 import APIFeatures from "../utils/apiFeatures.js";
@@ -268,16 +267,6 @@ export const editBlog = async (req, res) => {
         }
       }
 
-      // Check if the category exists (if provided and changed)
-      if (category && category !== blog.category?.toString()) {
-        const existingCategory = await Category.findById(category).session(
-          session
-        );
-        if (!existingCategory) {
-          return notFoundResponse(res, "Category");
-        }
-      }
-
       // Set publishedAt if blog is being published for the first time
       if (!blog.published && updateData.published) {
         updateData.publishedAt = new Date();
@@ -359,10 +348,6 @@ export const editBlog = async (req, res) => {
       (error.code === 11000 && error.keyPattern?.slug)
     ) {
       return conflictResponse(res, "A blog with this title already exists");
-    }
-
-    if (error.message.includes("Category not found")) {
-      return notFoundResponse(res, "Category");
     }
 
     return errorResponse(
